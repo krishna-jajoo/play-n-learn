@@ -3,8 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Save the Queen — Learn Python</title>
-  <meta name="description" content="A free game that teaches Python from zero: climb the tower, write real code, save the Queen before the candle burns out.">
+  <title>Save the Empire — Learn Python & Data Science</title>
+  <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex, noai, noimageai">
+  <meta name="googlebot" content="noindex, nofollow, noarchive, nosnippet">
+  <!-- page protection: the server sets this to "off" when started with ALLOW_DEVTOOLS=1 -->
+  <meta name="pnl-guard" content="on">
+  <script src="js/vendor/disable-devtool.min.js"></script>
+  <script src="js/guard.js"></script>
+  <meta name="description" content="A free game that teaches Python and data science from zero: free each realm of the Empire by writing real code before the candle burns out.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%91%91%3C/text%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -16,7 +22,7 @@
   <header class="topbar">
     <button class="brand" data-go="home" aria-label="Home">
       <span class="brand-crown">♛</span>
-      <span class="brand-text">Save the Queen <small>· Python</small></span>
+      <span class="brand-text">Save the Empire <small id="brand-realm">· Python &amp; Data Science</small></span>
     </button>
     <div class="topbar-right">
       <span class="engine" id="engine-status" title="Python engine status"><i></i><span>Loading Python…</span></span>
@@ -26,21 +32,53 @@
         <span class="switch-ui"></span>
         <span class="switch-label">Practice</span>
       </label>
-      <button class="btn ghost small" data-go="map">Tower</button>
+      <button class="btn ghost small" data-go="map" id="btn-tower">Tower</button>
+      <span class="user-chip" id="user-chip" hidden>
+        <span class="user-avatar" aria-hidden="true">👤</span>
+        <b id="user-name"></b>
+        <button class="btn ghost small" id="btn-logout">Log out</button>
+      </span>
     </div>
   </header>
 
   <main>
+    <!-- LOGIN -->
+    <section class="screen" id="screen-login" hidden>
+      <div class="login-card">
+        <div class="login-crown" aria-hidden="true">♛</div>
+        <h1>Who's playing?</h1>
+        <p class="muted">Each player has their own realms, stars and code.</p>
+        <div class="login-tabs" role="tablist">
+          <button type="button" role="tab" id="tab-login" class="active" aria-selected="true">Log in</button>
+          <button type="button" role="tab" id="tab-signup" aria-selected="false">New player</button>
+        </div>
+        <form id="login-form" autocomplete="on">
+          <label>Username
+            <input id="login-user" name="username" autocomplete="username" required minlength="3" maxlength="20" pattern="[A-Za-z0-9_\-]+" title="3–20 letters, numbers, _ or -" spellcheck="false" autocapitalize="off">
+          </label>
+          <label>Password
+            <input id="login-pass" name="password" type="password" autocomplete="current-password" required minlength="4">
+          </label>
+          <label id="login-confirm-row" hidden>Repeat password
+            <input id="login-confirm" type="password" autocomplete="new-password" minlength="4">
+          </label>
+          <p class="login-error" id="login-error" role="alert"></p>
+          <button class="btn primary big" id="login-submit" type="submit">Log in</button>
+        </form>
+        <p class="muted small">Accounts are kept on this computer in the <code>save</code> folder. Passwords are stored hashed, never as plain text.</p>
+      </div>
+    </section>
+
     <!-- HOME -->
-    <section class="screen" id="screen-home">
+    <section class="screen" id="screen-home" hidden>
       <div class="hero">
         <div class="hero-text">
-          <p class="eyebrow">A free coding quest</p>
-          <h1>Save the Queen<br><span>with Python</span></h1>
-          <p class="lead">The sorcerer <b>Malvex</b> has locked Queen Ada at the top of the Obsidian Tower. Each floor is sealed by a spell only real Python code can break — and every seal must be broken before the candle burns out.</p>
+          <p class="eyebrow">A free coding quest · Python to data science</p>
+          <h1>Save the Empire<br><span>with code</span></h1>
+          <p class="lead">The sorcerer <b>Malvex</b> has conquered the eight realms of the Empire and locked each ruler in a tower. Every floor is sealed by a spell only real code can break: Python first, then NumPy, SQL, pandas, statistics, charts and machine learning. Free them all and you'll have the skills of a data scientist.</p>
           <div class="hero-actions">
             <button class="btn primary big" id="btn-begin">Begin the quest</button>
-            <button class="btn ghost big" data-go="map">View the tower</button>
+            <a class="btn ghost big" href="#realms">See the realms</a>
           </div>
           <p class="hero-progress" id="home-progress"></p>
         </div>
@@ -70,15 +108,18 @@
         <div class="how-card"><span>🕯️</span><h3>Beat the candle</h3><p>Finish fast for 3 stars. Hints cost 30 seconds. Run out of time? Retry, practise, or study the solution.</p></div>
       </div>
 
-      <h2 class="section-title">The path to the throne — 13 floors, 46 missions</h2>
-      <ol class="syllabus" id="syllabus"></ol>
+      <h2 class="section-title" id="realms">The realms of the Empire</h2>
+      <p class="muted section-sub">Each realm unlocks once you've broken 70% of the seals in the realms it builds on.</p>
+      <div class="realms" id="realm-map"></div>
     </section>
 
     <!-- MAP -->
     <section class="screen" id="screen-map" hidden>
       <div class="map-head">
-        <h2>The Obsidian Tower</h2>
+        <p class="eyebrow" id="map-realm"></p>
+        <h2 id="map-title"></h2>
         <p>Climb floor by floor. Each mission unlocks the next. Harder floors give you more time.</p>
+        <button class="btn ghost small" data-go="home">← All realms</button>
       </div>
       <div class="tower" id="tower"></div>
     </section>
@@ -102,40 +143,53 @@
           <p class="story" id="m-story"></p>
           <h2 id="m-title"></h2>
           <div class="lesson" id="m-lesson"></div>
-          <div class="example">
-            <div class="example-head"><span>Example</span><button class="btn ghost small" id="btn-run-example">▶ Run example</button></div>
+          <details class="schema" id="m-schema" hidden open>
+            <summary>📋 Tables in the database</summary>
+            <div id="m-schema-body"></div>
+          </details>
+          <details class="example" id="m-example-box">
+            <summary class="example-head"><span class="example-title">Example <span class="example-hint">(click to show)</span></span><button class="btn ghost small" id="btn-run-example">▶ Run example</button></summary>
             <pre class="cm-s-quest" id="m-example"></pre>
-          </div>
+          </details>
           <div class="task">
-            <h3>⚔ Your mission</h3>
+            <h3 id="m-task-head">⚔ Your mission</h3>
             <div id="m-task"></div>
           </div>
-          <div class="hints">
+          <div class="hints" id="m-hints-box">
             <div class="hints-head"><h3>Hints</h3><button class="btn ghost small" id="btn-hint">Reveal a hint</button></div>
             <ol id="m-hints"></ol>
           </div>
         </article>
 
-        <div class="code-panel">
-          <div class="editor-wrap">
+        <div class="code-panel" id="code-panel">
+          <div class="briefing" id="briefing">
+            <div class="briefing-card">
+              <p class="briefing-floor" id="briefing-floor"></p>
+              <h3 id="briefing-title"></h3>
+              <p id="briefing-lead">Read the lesson on the left. When you press start, you'll have</p>
+              <p class="briefing-time" id="briefing-time"></p>
+              <p class="muted small">to break this seal. Finish with half the time left for ★★★.</p>
+              <button class="btn primary big" id="btn-start">Light the candle &amp; start</button>
+              <button class="btn link" id="btn-practice-once">or practise without a timer</button>
+            </div>
+          </div>
+          <div class="quiz-panel" id="quiz-panel" hidden>
+            <div class="quiz-head"><span id="q-progress"></span><span class="muted small">Wrong answers cost 30 s</span></div>
+            <p class="quiz-q" id="q-text"></p>
+            <pre class="cm-s-quest quiz-code" id="q-code"></pre>
+            <div class="quiz-choices" id="q-choices"></div>
+            <div class="quiz-feedback" id="q-feedback"></div>
+            <div class="quiz-actions"><button class="btn ghost small" id="q-run" hidden>▶ Run this code</button><button class="btn primary" id="q-next" hidden>Next question →</button></div>
+          </div>
+
+          <div class="editor-wrap" id="editor-wrap">
             <div class="editor-head">
-              <span class="file-tab">main.py</span>
+              <span class="file-tab" id="file-tab">main.py</span>
               <div class="editor-actions">
                 <button class="btn ghost small" id="btn-reset" title="Reset to the starting code">Reset</button>
               </div>
             </div>
             <div id="editor-host"></div>
-            <div class="briefing" id="briefing">
-              <div class="briefing-card">
-                <p class="briefing-floor" id="briefing-floor"></p>
-                <h3 id="briefing-title"></h3>
-                <p>Read the lesson on the left. When you press start, you'll have</p>
-                <p class="briefing-time" id="briefing-time"></p>
-                <p class="muted small">to break this seal. Finish with half the time left for ★★★.</p>
-                <button class="btn primary big" id="btn-start">Light the candle &amp; start</button>
-                <button class="btn link" id="btn-practice-once">or practise without a timer</button>
-              </div>
-            </div>
           </div>
 
           <details class="input-box" id="input-box">
@@ -143,13 +197,13 @@
             <textarea id="stdin" spellcheck="false" rows="3" placeholder="Type input lines here"></textarea>
           </details>
 
-          <div class="run-row">
+          <div class="run-row" id="run-row">
             <button class="btn" id="btn-run" title="Ctrl+Enter">▶ Run</button>
             <button class="btn primary" id="btn-submit" title="Ctrl+Shift+Enter">⚔ Submit</button>
             <span class="kbd-hint">Ctrl+Enter run · Ctrl+Shift+Enter submit</span>
           </div>
 
-          <div class="console">
+          <div class="console" id="console-box">
             <div class="console-head">Output</div>
             <div class="console-body" id="console"><span class="muted">Your program's output will appear here.</span></div>
           </div>
@@ -159,7 +213,10 @@
   </main>
 
   <footer class="footer">
-    <span>Free forever · Your progress is saved in this browser.</span>
+    <span id="save-status">Progress is saved in this browser.</span>
+    <button class="btn link small" id="btn-export" title="Download a backup of your progress">Export progress</button>
+    <button class="btn link small" id="btn-import" title="Load a backup (it is combined with your current progress)">Import progress</button>
+    <input type="file" id="import-file" accept=".json,application/json" hidden>
     <button class="btn link small" id="btn-reset-progress">Reset all progress</button>
   </footer>
 
@@ -174,11 +231,21 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/sql/sql.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/runmode/runmode.min.js"></script>
   <script src="js/harness.js"></script>
-  <script src="js/levels.js"></script>
+  <script src="js/quest.js"></script>
+  <script src="js/empires/python.js"></script>
+  <script src="js/empires/numpy.js"></script>
+  <script src="js/empires/pandas.js"></script>
+  <script src="js/empires/sql.js"></script>
+  <script src="js/empires/stats.js"></script>
+  <script src="js/empires/viz.js"></script>
+  <script src="js/empires/ml.js"></script>
+  <script src="js/empires/capstone.js"></script>
+  <script src="js/empires/upcoming.js"></script>
   <script src="js/runner.js"></script>
   <script src="js/app.js"></script>
 </body>
