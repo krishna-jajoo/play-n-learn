@@ -103,7 +103,7 @@ server.on("error", (err) => {
 
 // Only reachable from this computer.
 server.listen(PORT, "127.0.0.1", () => {
-  console.log(`Save the Queen running at http://localhost:${PORT}  (Ctrl+C to stop)`);
+  console.log(`Save the Empire running at http://localhost:${PORT}  (Ctrl+C to stop)`);
   const users = A.listUsers();
   console.log(users.length ? `Players: ${users.join(", ")}` : "No players yet — create one on the login screen.");
 });

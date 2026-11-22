@@ -1,11 +1,13 @@
-// Save the Queen — game logic: progress, tower map, missions, timer, judging.
+// Save the Empire — game logic: accounts, progress, world map, towers, missions, timer, judging.
 (function () {
   "use strict";
 
-  const WORLDS = window.WORLDS;
-  const ALL = WORLDS.flatMap((w) => w.missions.map((m) => Object.assign(m, { world: w })));
+  const EMPIRES = window.QUEST.build();
+  const EMP = Object.fromEntries(EMPIRES.map((e) => [e.id, e]));
+  const ALL = EMPIRES.flatMap((e) => e.missions);
   const TOTAL_STARS = ALL.length * 3;
-  const HINT_PENALTY = 30; // seconds
+  const HINT_PENALTY = 30; // seconds (also the cost of a wrong quiz answer)
+  const timeOf = (m) => m.time || (m.type === "quiz" ? Math.max(90, 60 * m.questions.length) : m.world.time);
   const LEGACY_KEY = "save-the-queen-python-v1"; // browser save from before accounts (also used in guest mode)
   const AUTH_KEY = "pnl-auth";
 
@@ -54,6 +56,8 @@
       missions: {},
       code: Object.assign({}, older.code || {}, newer.code || {}),
       practice: !!newer.practice,
+      empire: newer.empire || older.empire,
+      opened: Object.assign({}, older.opened || {}, newer.opened || {}),
       updated: Math.max(a.updated || 0, b.updated || 0),
     };
     const ids = new Set([...Object.keys(a.missions || {}), ...Object.keys(b.missions || {})]);
@@ -225,28 +229,76 @@
   function refreshVisible() {
     renderHeader();
     if (!$("screen-home").hidden) renderHome();
-    if (!$("screen-map").hidden) renderMap();
+    if (!$("screen-map").hidden) renderMap(activeEmpire());
   }
   const rec = (id) => progress.missions[id] || {};
   const isDone = (id) => !!rec(id).done;
   const starsOf = (id) => rec(id).stars || 0;
+  const starsIn = (list) => list.reduce((s, m) => s + starsOf(m.id), 0);
+  const doneIn = (list) => list.filter((m) => isDone(m.id)).length;
+  const totalStars = () => starsIn(ALL);
+  const doneCount = () => doneIn(ALL);
+
+  // A realm is freed when every seal is broken. The next realm opens once every realm it builds on is
+  // at least UNLOCK_PCT % done. Once open it stays open, even if new missions are later added to an earlier realm.
+  const UNLOCK_PCT = 70;
+  const empireFreed = (e) => e.playable && e.missions.every((m) => isDone(m.id));
+  const unlockNeed = (e) => Math.ceil((e.missions.length * UNLOCK_PCT) / 100);
+  const empireReady = (e) => e.playable && doneIn(e.missions) >= unlockNeed(e);
+  const requiresMet = (e) => e.requires.every((id) => EMP[id] && empireReady(EMP[id]));
+  // what a locked realm still needs, e.g. "28 of the 40 NumPy seals (you have 21)"
+  const stillNeeded = (e) => e.requires.map((id) => EMP[id]).filter((x) => !empireReady(x))
+    .map((x) => `${unlockNeed(x)} of the ${x.missions.length} ${esc(x.name)} seals (you have ${doneIn(x.missions)})`);
+  // realms this one will open at the 70% mark that aren’t open yet, e.g. "NumPy & SQL"
+  const opensNext = (e) => EMPIRES.filter((x) => x.playable && x.requires.includes(e.id) && !empireOpen(x) && !empireReady(e)).map((x) => esc(x.name));
+  const empireOpen = (e) => e.playable && (!e.requires.length || !!(progress.opened || {})[e.id] || requiresMet(e));
+  function rememberOpened() {
+    progress.opened = progress.opened || {};
+    let changed = false;
+    EMPIRES.forEach((e) => { if (e.playable && e.requires.length && !progress.opened[e.id] && requiresMet(e)) { progress.opened[e.id] = true; changed = true; } });
+    return changed;
+  }
   const isUnlocked = (m) => {
-    const i = ALL.indexOf(m);
-    return i === 0 || isDone(ALL[i - 1].id) || isDone(m.id);
+    if (isDone(m.id)) return true;
+    if (!empireOpen(m.empire)) return false;
+    const list = m.empire.missions;
+    const i = list.indexOf(m);
+    return i === 0 || isDone(list[i - 1].id);
   };
-  const totalStars = () => ALL.reduce((s, m) => s + starsOf(m.id), 0);
-  const doneCount = () => ALL.filter((m) => isDone(m.id)).length;
-  const nextMission = () => ALL.find((m) => !isDone(m.id)) || ALL[ALL.length - 1];
+  // Continue where the player is furthest along; earlier gaps (e.g. newly added missions) stay open on the map.
+  function nextMission(e) {
+    const list = e.missions;
+    let last = -1;
+    list.forEach((m, i) => { if (isDone(m.id)) last = i; });
+    return list.slice(last + 1).find((m) => !isDone(m.id)) || list.find((m) => !isDone(m.id)) || list[list.length - 1];
+  }
+  const activeEmpire = () => {
+    const e = EMP[progress.empire];
+    return e && empireOpen(e) ? e : EMPIRES[0];
+  };
 
   // ───────────────────────── Python engine
   const engineEl = $("engine-status");
+  let runnerRef = null; // the callback below can fire during construction, before `runner` exists
   const runner = new window.PyRunner((state, msg) => {
     engineEl.className = "engine " + state;
+    const extras = runnerRef ? [...runnerRef.loaded].map((p) => ({ numpy: "NumPy", pandas: "pandas", sqlite3: "SQLite", scipy: "SciPy", matplotlib: "matplotlib", "micropip:seaborn": "seaborn", "scikit-learn": "scikit-learn" }[p] || p)) : [];
     engineEl.querySelector("span").textContent =
-      state === "ready" ? "Python ready" : state === "loading" ? "Loading Python…" : "Python failed to load";
-    if (state === "error") engineEl.title = msg || "";
-    setTimeout(updateRunButtons, 0); // may fire during construction, before `runner` exists
+      state === "ready" ? ["Python", ...extras].join(" + ") + " ready" : state === "loading" ? msg || "Loading Python…" : "Python failed to load";
+    engineEl.title = state === "error" ? msg || "" : "Python engine status";
+    setTimeout(updateRunButtons, 0);
   });
+  runnerRef = runner;
+  // Run code and refresh the Run/Submit buttons right away (not only on the 500 ms timer), so a quick click isn't lost.
+  async function execRun(payload, ms) {
+    setTimeout(updateRunButtons, 0);
+    try { return await runner.exec(payload, ms); } finally { updateRunButtons(); }
+  }
+  // Each realm says which Python packages it needs (e.g. NumPy); load them as soon as the player heads there.
+  const needPackages = (e) => { if (e && e.packages && e.packages.length) runner.ensurePackages(e.packages); };
+  // Heavier libraries need more time per run.
+  const runMs = () => (current && current.empire.runMs) || 5000;
+  const submitMs = () => (current && current.empire.submitMs) || 8000;
 
   // ───────────────────────── screens
   const screens = ["login", "home", "map", "mission"];
@@ -256,31 +308,71 @@
     if (name !== "mission") stopTimer();
     screens.forEach((s) => ($("screen-" + s).hidden = s !== name));
     if (name === "home") renderHome();
-    if (name === "map") renderMap();
+    if (name === "map") renderMap(activeEmpire());
     window.scrollTo(0, 0);
   }
   document.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => show(b.dataset.go)));
 
   function renderHeader() {
-    $("star-count").textContent = `★ ${totalStars()} / ${TOTAL_STARS}`;
+    $("star-count").innerHTML = `★ ${totalStars()}<span class="star-total"> / ${TOTAL_STARS}</span>`;
     $("practice-toggle").checked = !!progress.practice;
+    $("btn-tower").innerHTML = `<span class="tower-icon">${activeEmpire().icon} </span>Tower`;
   }
 
+  // ───────────────────────── home: the world map of realms
+  // Depth = how many realms stand before this one; realms of the same depth share a row.
+  const depthOf = (e) => (e.requires.length ? 1 + Math.max(...e.requires.map((id) => depthOf(EMP[id]))) : 0);
+  function realmState(e) {
+    if (!e.playable) return "soon";
+    if (empireFreed(e)) return "freed";
+    return empireOpen(e) ? "open" : "locked";
+  }
+  const floorsOf = (e) => (e.playable ? e.worlds : e.plan || []);
+
   function renderHome() {
+    if (rememberOpened()) save();
     renderHeader();
     const done = doneCount();
-    $("btn-begin").textContent = done === 0 ? "Begin the quest" : done === ALL.length ? "Replay the quest" : "Continue the quest";
-    $("home-progress").textContent = done ? `${done} of ${ALL.length} seals broken · ★ ${totalStars()} stars` : "";
-    $("syllabus").innerHTML = WORLDS.map((w) => {
-      const d = w.missions.filter((m) => isDone(m.id)).length;
-      return `<li class="${d === w.missions.length ? "cleared" : ""}">
-        <span class="syl-icon">${w.icon}</span>
-        <div><b>Floor ${w.id} · ${esc(w.name)}</b><span>${esc(w.topic)}</span>
-        <span class="syl-meta">${w.missions.length} missions · ⏱ ${fmt(w.time)} each${d ? ` · ${d}/${w.missions.length} done` : ""}</span></div>
-      </li>`;
-    }).join("");
+    const e = activeEmpire();
+    $("btn-begin").textContent = done === 0 ? "Begin the quest" : `Continue in ${e.name} ${e.icon}`;
+    const freed = EMPIRES.filter(empireFreed).length;
+    $("home-progress").textContent = done ? `${done} seals broken · ★ ${totalStars()} stars · ${freed} of ${EMPIRES.length} realms freed` : "";
+
+    const rows = [];
+    EMPIRES.forEach((x) => (rows[depthOf(x)] = rows[depthOf(x)] || []).push(x));
+    $("realm-map").innerHTML = rows.map((row) => `<div class="realm-row">${row.map((x) => {
+      const st = realmState(x);
+      const n = x.missions.length, dn = doneIn(x.missions);
+      const pct = n ? Math.round((dn / n) * 100) : 0;
+      const meta = st === "freed" ? `${x.rulerIcon} ${esc(x.ruler)} is free · ★ ${starsIn(x.missions)}/${n * 3}`
+        : st === "open" ? `${dn} / ${n} seals · ★ ${starsIn(x.missions)}/${n * 3}${opensNext(x).length ? `<br>${unlockNeed(x)} seals open ${opensNext(x).join(" & ")}` : ""}`
+        : st === "locked" ? `🔒 Opens with ${stillNeeded(x).join(" & ")}`
+        : `Coming soon · ${floorsOf(x).length} floors planned`;
+      return `<button class="realm ${st}" data-realm="${x.id}" style="--realm:${x.color}">
+          <span class="realm-icon">${x.icon}</span>
+          <span class="realm-name">${esc(x.name)}</span>
+          <span class="realm-sub">${esc(x.realm)}</span>
+          <span class="realm-bar"><i style="width:${pct}%"></i></span>
+          <span class="realm-meta">${meta}</span>
+        </button>`;
+    }).join("")}</div>`).join("");
+    $("realm-map").querySelectorAll("[data-realm]").forEach((b) => b.addEventListener("click", () => openRealm(EMP[b.dataset.realm])));
   }
-  $("btn-begin").addEventListener("click", () => openMission(nextMission()));
+  $("btn-begin").addEventListener("click", () => openMission(nextMission(activeEmpire())));
+
+  function openRealm(e) {
+    const st = realmState(e);
+    if (st === "open" || st === "freed") { progress.empire = e.id; saveLocal(); return show("map"); }
+    const floors = floorsOf(e).map((f) => `<li><b>${esc(f.name)}</b> <span class="muted">· ${esc(f.topic)}</span></li>`).join("");
+    modal({
+      icon: e.icon, title: `${e.name} · ${e.realm}`,
+      body: `<p>${esc(e.blurb)}</p>
+        <p class="muted">${st === "soon" ? "This realm is still being built." : `Break ${UNLOCK_PCT}% of the seals in ${e.requires.map((id) => `<b>${esc(EMP[id].name)}</b>`).join(" and ")} to open it. Still needed: ${stillNeeded(e).join(", ")}.`}
+        ${esc(e.ruler)} waits in ${esc(e.tower)}.</p>
+        <ol class="plan-list">${floors}</ol>`,
+      actions: [{ label: "Close", primary: true, fn: () => {} }],
+    });
+  }
 
   function starHtml(n, max = 3) {
     let s = "";
@@ -288,24 +380,31 @@
     return `<span class="stars">${s}</span>`;
   }
 
-  function renderMap() {
+  function renderMap(e) {
     renderHeader();
-    const floors = [...WORLDS].reverse();
-    const allDone = doneCount() === ALL.length;
+    needPackages(e);
+    progress.empire = e.id;
+    document.documentElement.style.setProperty("--realm", e.color);
+    $("map-realm").textContent = `${e.icon} ${e.name} · ${e.realm}`;
+    $("map-title").textContent = e.tower;
+    const floors = [...e.worlds].reverse();
+    const allDone = empireFreed(e);
+    const dn = doneIn(e.missions);
     let html = `<div class="summit ${allDone ? "freed" : ""}">
-        <div class="queen">${allDone ? "👸" : "♛"}</div>
-        <div><b>${allDone ? "Queen Ada is free!" : "Queen Ada waits at the top"}</b>
-        <span>${doneCount()} / ${ALL.length} seals broken</span></div>
+        <div class="queen">${allDone ? e.rulerIcon : "♛"}</div>
+        <div><b>${allDone ? `${esc(e.ruler)} is free!` : `${esc(e.ruler)} waits at the top`}</b>
+        <span>${dn} / ${e.missions.length} seals broken</span></div>
       </div>`;
     html += floors.map((w) => {
-      const floorUnlocked = isUnlocked(w.missions[0]);
-      const st = w.missions.reduce((s, m) => s + starsOf(m.id), 0);
+      const floorUnlocked = w.missions.some(isUnlocked);
+      const st = starsIn(w.missions);
+      const quizzes = w.missions.filter((m) => m.type === "quiz").length;
       const nodes = w.missions.map((m, i) => {
         const un = isUnlocked(m);
         const dn = isDone(m.id);
         const cur = un && !dn;
-        return `<button class="node ${dn ? "done" : ""} ${cur ? "current" : ""}" ${un ? "" : "disabled"} data-mission="${m.id}" title="${esc(m.title)}">
-            <span class="node-num">${un ? i + 1 : "🔒"}</span>
+        return `<button class="node ${m.type} ${dn ? "done" : ""} ${cur ? "current" : ""}" ${un ? "" : "disabled"} data-mission="${m.id}" title="${esc(m.title)}">
+            <span class="node-num">${un ? i + 1 : "🔒"}${m.type === "quiz" ? " · quiz" : m.boss ? " · boss" : ""}</span>
             <span class="node-title">${esc(m.title)}</span>
             ${starHtml(starsOf(m.id))}
           </button>`;
@@ -313,8 +412,8 @@
       return `<section class="floor ${floorUnlocked ? "" : "locked"}">
           <div class="floor-head">
             <span class="floor-icon">${w.icon}</span>
-            <div class="floor-info"><span class="floor-num">Floor ${w.id}</span><h3>${esc(w.name)}</h3><p>${esc(w.topic)}</p></div>
-            <div class="floor-meta"><span>⏱ ${fmt(w.time)} each</span><span>★ ${st}/${w.missions.length * 3}</span></div>
+            <div class="floor-info"><span class="floor-num">Floor ${w.num}</span><h3>${esc(w.name)}</h3><p>${esc(w.topic)}</p></div>
+            <div class="floor-meta"><span>⏱ ${fmt(w.time)} per mission${quizzes ? " · quizzes shorter" : ""}</span><span>★ ${st}/${w.missions.length * 3}</span></div>
           </div>
           <p class="floor-intro">${esc(w.intro)}</p>
           <div class="nodes">${nodes}</div>
@@ -323,8 +422,9 @@
     $("tower").innerHTML = html;
     $("tower").querySelectorAll("[data-mission]").forEach((b) =>
       b.addEventListener("click", () => openMission(ALL.find((m) => m.id === b.dataset.mission))));
-    // Floor 1 is at the bottom of the tower: bring the learner's current mission into view.
-    const cur = $("tower").querySelector(".node.current");
+    // Floor 1 is at the bottom of the tower: bring the learner's furthest mission into view.
+    const nx = nextMission(e);
+    const cur = $("tower").querySelector(`.node.current[data-mission="${nx.id}"]`) || $("tower").querySelector(".node.current");
     if (cur) setTimeout(() => cur.scrollIntoView({ block: "center" }), 0);
   }
 
@@ -369,10 +469,15 @@
     errorLine = null;
   }
 
-  function highlight(el, code) {
-    if (window.CodeMirror && CodeMirror.runMode) { el.textContent = ""; CodeMirror.runMode(code, "python", el); }
+  function highlight(el, code, lang = "python") {
+    if (window.CodeMirror && CodeMirror.runMode) { el.textContent = ""; CodeMirror.runMode(code, lang, el); }
     else el.textContent = code;
   }
+  // SQL realm: the player writes queries, which run against the realm's SQLite database.
+  const isSql = (m) => !!m && m.empire.id === "sql";
+  const langOf = (m) => (isSql(m) ? "text/x-sqlite" : "python");
+  const setupOf = (m) => m.db || m.empire.db || "";
+  const sqlPayload = (m, sql, extra) => Object.assign({ mode: "sql", sql, setup: setupOf(m), verify: m.verify }, extra);
 
   // ───────────────────────── mission
   let current = null;
@@ -383,49 +488,129 @@
 
   function openMission(m) {
     if (!m || !isUnlocked(m)) return;
+    needPackages({ packages: [...(m.empire.packages || []), ...(m.packages || [])] }); // some missions need extra libraries (e.g. SciPy)
     stopTimer();
     current = m;
     mode = progress.practice ? "practice" : "timed";
     started = false;
     hintsShown = 0;
     revealed = false;
-    const w = m.world;
+    const w = m.world, e = m.empire, isQuiz = m.type === "quiz";
+    const pos = w.missions.indexOf(m) + 1;
+    progress.empire = e.id;
+    document.documentElement.style.setProperty("--realm", e.color);
 
-    $("m-crumb").innerHTML = `Floor ${w.id} · ${esc(w.name)} <b>› ${esc(m.id)} ${esc(m.title)}</b>`;
-    $("m-story").textContent = m.story;
+    $("m-crumb").innerHTML = `${e.icon} Floor ${w.num} · ${esc(w.name)} <b>› ${pos}. ${esc(m.title)}</b>`;
+    $("m-story").textContent = m.story || "";
     $("m-title").textContent = m.title;
-    $("m-lesson").innerHTML = m.lesson;
-    highlight($("m-example"), m.example.replace(/\n$/, ""));
-    $("m-task").innerHTML = m.task;
+    $("m-lesson").innerHTML = m.lesson || "";
+    $("m-example-box").hidden = !m.example;
+    if (m.example) highlight($("m-example"), m.example.replace(/\n$/, ""), langOf(m));
+    $("m-schema").hidden = !(isSql(m) && e.schema);
+    if (isSql(m) && e.schema) $("m-schema-body").innerHTML = e.schema;
+    $("m-task-head").textContent = isQuiz ? "🔮 Your trial" : m.boss ? "🐉 Floor boss" : "⚔ Your mission";
+    $("m-task").innerHTML = isQuiz ? (m.task || `Answer all ${m.questions.length} questions correctly. Read each one carefully, because every wrong answer burns ${HINT_PENALTY} seconds of the candle.`) : m.task;
+    $("m-hints-box").hidden = isQuiz;
     $("m-hints").innerHTML = "";
     updateHintButton();
 
-    editor.setValue(progress.code[m.id] != null ? progress.code[m.id] : m.starter);
-    $("stdin").value = m.sampleInput || "";
-    $("input-box").open = m.sampleInput !== undefined;
-    setConsole(`<span class="muted">Your program's output will appear here.</span>`);
+    // quiz missions swap the editor for the question panel
+    $("quiz-panel").hidden = !isQuiz;
+    ["editor-wrap", "input-box", "run-row", "console-box"].forEach((id) => ($(id).hidden = isQuiz));
+    $("code-panel").classList.toggle("quiz-mode", isQuiz);
+    if (isQuiz) { quiz.i = 0; renderQuestion(); }
+    else {
+      editor.setOption("mode", langOf(m));
+      $("file-tab").textContent = isSql(m) ? "query.sql" : "main.py";
+      editor.setValue(progress.code[m.id] != null ? progress.code[m.id] : m.starter);
+      $("stdin").value = m.sampleInput || "";
+      $("input-box").open = m.sampleInput !== undefined;
+      $("input-box").hidden = isSql(m);
+      setConsole(isSql(m) ? `<span class="muted">Your query's result will appear here as a table.</span>` : `<span class="muted">Your program's output will appear here.</span>`);
+    }
 
-    $("briefing-floor").textContent = `Floor ${w.id} · Mission ${m.id}`;
+    const t = timeOf(m);
+    $("briefing-floor").textContent = `${e.name} · Floor ${w.num} · ${isQuiz ? "Quiz" : m.boss ? "Boss" : "Mission"} ${pos}`;
     $("briefing-title").textContent = m.title;
-    $("briefing-time").textContent = fmt(w.time);
+    $("briefing-lead").textContent = isQuiz ? `${m.questions.length} questions. When you press start, you'll have` : "Read the lesson on the left. When you press start, you'll have";
+    $("briefing-time").textContent = fmt(t);
     show("mission");
     $("lesson-panel").scrollTop = 0;
 
     if (mode === "practice") startMission("practice");
-    else { $("briefing").hidden = false; renderCandle(w.time, w.time); }
-    setTimeout(() => editor.refresh(), 0);
+    else { $("briefing").hidden = false; renderCandle(t, t); }
+    if (!isQuiz) setTimeout(() => editor.refresh(), 0);
+    updateRunButtons();
   }
 
   function startMission(asMode) {
     mode = asMode;
     started = true;
     $("briefing").hidden = true;
-    if (mode === "timed") startTimer(current.world.time);
+    if (mode === "timed") startTimer(timeOf(current));
     else { stopTimer(); $("candle").classList.add("practice"); $("candle-time").textContent = "Practice"; $("candle-fill").style.width = "100%"; }
-    editor.focus();
+    if (current.type === "quiz") { if (mode === "timed") quiz.i = 0; renderQuestion(); } // a fresh candle restarts the quiz
+    else editor.focus();
     updateRunButtons();
     updateHintButton();
   }
+
+  // ───────────────────────── quiz missions
+  const quiz = { i: 0 };
+  const canAnswer = () => started && !(mode === "timed" && !timer.running);
+  function renderQuestion() {
+    const qs = current.questions, q = qs[quiz.i];
+    $("q-progress").textContent = `Question ${quiz.i + 1} of ${qs.length}`;
+    $("q-text").innerHTML = q.q;
+    $("q-code").hidden = !q.code;
+    if (q.code) highlight($("q-code"), q.code.replace(/\n$/, ""), langOf(current));
+    $("q-feedback").innerHTML = "";
+    $("q-next").hidden = true;
+    $("q-run").hidden = true;
+    const box = $("q-choices");
+    box.innerHTML = "";
+    box.classList.toggle("mono", !!q.predict);
+    q.choices.forEach((c, i) => {
+      const b = document.createElement("button");
+      b.className = "choice";
+      b.innerHTML = `<span class="choice-key">${"ABCDEF"[i]}</span><span class="choice-text">${q.predict ? `<pre>${esc(c)}</pre>` : c}</span>`;
+      b.addEventListener("click", () => answer(i, b));
+      box.appendChild(b);
+    });
+  }
+  function answer(i, btn) {
+    if (!canAnswer() || btn.disabled) return;
+    const q = current.questions[quiz.i];
+    const last = quiz.i === current.questions.length - 1;
+    if (i !== q.answer) {
+      btn.classList.add("wrong");
+      btn.disabled = true;
+      let msg = `<div class="msg error">✘ Not quite. Look again${q.code ? " and trace the code line by line" : ""}.</div>`;
+      if (mode === "timed" && timer.running) { timer.penalty += HINT_PENALTY; flashPenalty(); msg = msg.replace("</div>", ` (−${HINT_PENALTY}s)</div>`); }
+      $("q-feedback").innerHTML = msg;
+      return;
+    }
+    $("q-choices").querySelectorAll(".choice").forEach((b, k) => { b.disabled = true; if (k === i) b.classList.add("right"); });
+    $("q-feedback").innerHTML = `<div class="msg ok">✔ Correct!</div>${q.explain ? `<div class="msg info">${q.explain}</div>` : ""}`;
+    $("q-run").hidden = !q.code;
+    if (last) return win(current, { total: current.questions.length });
+    $("q-next").hidden = false;
+    $("q-next").focus();
+  }
+  $("q-next").addEventListener("click", () => { quiz.i++; renderQuestion(); });
+  $("q-run").addEventListener("click", async () => {
+    const q = current && current.type === "quiz" && current.questions[quiz.i];
+    if (!q || !q.code || !runner.ready) return;
+    const r = isSql(current)
+      ? await execRun(sqlPayload(current, q.code, { run: true, verify: undefined }), runMs())
+      : await execRun({ mode: "run", code: q.code, inputs: [], files: current.files }, runMs());
+    if (r.kind === "timeout" || r.kind === "busy") return;
+    const out = document.createElement("div");
+    out.className = "kv";
+    out.innerHTML = `<span>${isSql(current) ? "Real result" : "Real output"}</span>${resultHtml(r)}${r.error ? errorHtml(r.error) : ""}`;
+    $("q-feedback").appendChild(out);
+    $("q-run").hidden = true;
+  });
   $("btn-start").addEventListener("click", () => startMission("timed"));
   $("btn-practice-once").addEventListener("click", () => startMission("practice"));
 
@@ -437,7 +622,7 @@
 
   // hints
   function updateHintButton() {
-    const left = current ? current.hints.length - hintsShown : 0;
+    const left = current && current.hints ? current.hints.length - hintsShown : 0;
     const b = $("btn-hint");
     b.disabled = left <= 0 || !started;
     b.textContent = !started ? "Hints unlock when you start"
@@ -445,7 +630,7 @@
       : mode === "timed" && !revealed ? `Reveal a hint (−${HINT_PENALTY}s)` : "Reveal a hint";
   }
   $("btn-hint").addEventListener("click", () => {
-    if (!current || hintsShown >= current.hints.length) return;
+    if (!current || !current.hints || hintsShown >= current.hints.length) return;
     const li = document.createElement("li");
     li.textContent = current.hints[hintsShown++];
     $("m-hints").appendChild(li);
@@ -500,19 +685,29 @@
     stopTimer();
     $("candle").classList.add("out");
     updateRunButtons();
+    const isQuiz = current.type === "quiz";
     modal({
       icon: "🕯️", title: "The candle burned out…",
-      body: `<p>Malvex's seal holds — for now. Don't worry: every great programmer gets stuck. Your code is still here.</p>
-             <p class="muted">Try again with a fresh candle, keep working without a timer, or study the solution and learn from it.</p>`,
+      body: `<p>Malvex's seal holds — for now. Don't worry: every great programmer gets stuck.${isQuiz ? "" : " Your code is still here."}</p>
+             <p class="muted">Try again with a fresh candle, keep working without a timer, or ${isQuiz ? "see the answer to this question" : "study the solution"} and learn from it.</p>`,
       actions: [
         { label: "Try again", primary: true, fn: () => startMission("timed") },
         { label: "Keep going (practice)", fn: () => startMission("practice") },
-        { label: "Show solution", fn: revealSolution },
+        { label: isQuiz ? "Show the answer" : "Show solution", fn: revealSolution },
       ],
     });
   }
 
   function revealSolution() {
+    if (current.type === "quiz") {
+      if (!confirm("Show the right answer? This quiz will give 0 stars until you replay it.")) return;
+      revealed = true;
+      startMission("practice");
+      const q = current.questions[quiz.i];
+      $("q-choices").children[q.answer].classList.add("reveal");
+      $("q-feedback").innerHTML = `<div class="msg info">📜 The highlighted answer is correct.${q.explain ? " " + q.explain : ""} Pick it to continue.</div>`;
+      return;
+    }
     if (!confirm("Show the solution? Your current code will be replaced, and this mission will give 0 stars until you replay it.")) return;
     revealed = true;
     updateHintButton();
@@ -523,10 +718,17 @@
 
   // ───────────────────────── run / submit
   function updateRunButtons() {
-    const canCode = runner.ready && current && started && !(mode === "timed" && !timer.running);
+    const canCode = runner.ready && current && current.type !== "quiz" && started && !(mode === "timed" && !timer.running);
     $("btn-run").disabled = !canCode || runner.busy;
     $("btn-submit").disabled = !canCode || runner.busy;
     $("btn-run-example").disabled = !runner.ready || runner.busy;
+    // don't let the candle burn while Python (or a library like NumPy) is still downloading
+    const waiting = current && current.type !== "quiz" && (!runner.ready || !!runner.loadingPackages);
+    const start = $("btn-start");
+    if (start.disabled !== !!waiting) {
+      start.disabled = !!waiting;
+      start.textContent = waiting ? "Waiting for the Python engine…" : "Light the candle & start";
+    }
   }
   setInterval(updateRunButtons, 500);
 
@@ -537,6 +739,11 @@
     return `<div class="msg error"><b>${esc(err.type)}${where}:</b> ${esc(err.message)}</div>
       <div class="msg tip">💡 ${esc(err.friendly)}</div>`;
   }
+  function imagesHtml(images) {
+    return (images || []).map((b64) => `<img class="plot" alt="your chart" src="data:image/png;base64,${b64}">`).join("");
+  }
+  // printed output and/or charts; "(nothing was printed)" only when there's neither
+  const resultHtml = (r) => (r.display || !(r.images && r.images.length) ? outputHtml(r.display) : "") + imagesHtml(r.images);
   function outputHtml(text) {
     return text ? `<pre class="out">${esc(text)}</pre>` : `<div class="muted">(nothing was printed)</div>`;
   }
@@ -548,11 +755,18 @@
     if ($("btn-run").disabled) return;
     clearErrorLine();
     setConsole(`<div class="muted">Running…</div>`);
+    if (isSql(current)) {
+      const r = await execRun(sqlPayload(current, editor.getValue(), { run: true }), runMs());
+      if (r.kind === "timeout") return setConsole(timeoutHtml(r));
+      if (r.kind === "busy") return;
+      if (r.error) return setConsole(errorHtml(r.error));
+      return setConsole(`${current.verify ? '<div class="muted small">The database after your statements:</div>' : ""}<pre class="out sql-table">${esc(r.display)}</pre><div class="msg ok-soft">✔ The query ran. Press <b>Submit</b> when you think the result is right.</div>`);
+    }
     const inputs = $("stdin").value === "" ? [] : $("stdin").value.replace(/\r/g, "").split("\n");
-    const r = await runner.exec({ mode: "run", code: editor.getValue(), inputs }, 5000);
+    const r = await execRun({ mode: "run", code: editor.getValue(), inputs, files: current.files }, runMs());
     if (r.kind === "timeout") return setConsole(timeoutHtml(r));
     if (r.kind === "busy") return;
-    let html = outputHtml(r.display);
+    let html = resultHtml(r);
     if (r.error) { html += errorHtml(r.error); markErrorLine(r.error.line); }
     else html += `<div class="msg ok-soft">✔ Ran without errors. Press <b>Submit</b> when you think it's right.</div>`;
     setConsole(html);
@@ -563,18 +777,23 @@
     const m = current;
     clearErrorLine();
     setConsole(`<div class="muted">Testing your spell against the seal…</div>`);
-    const r = await runner.exec({ mode: "submit", code: editor.getValue(), tests: m.tests }, 8000);
+    const r = isSql(m)
+      ? await execRun(sqlPayload(m, editor.getValue(), { solution: m.solution, variants: m.variants || m.empire.variants || [],
+          ordered: !!m.ordered, checkNames: !!m.checkNames, mustUse: m.mustUse, mustNotUse: m.mustNotUse }), submitMs())
+      : await execRun({ mode: "submit", code: editor.getValue(), tests: m.tests, files: m.files }, submitMs());
     if (m !== current) return;
     if (r.kind === "timeout") return setConsole(timeoutHtml(r));
     if (r.kind === "busy") return;
     if (r.ok) return win(m, r);
 
-    const label = r.total > 1 ? `Test ${r.index + 1} of ${r.total} failed` : "The seal didn't break";
+    const label = isSql(m) && r.total > 1 ? (r.index === 0 ? "Wrong result on the kingdom database" : `Right on the kingdom database, but wrong on hidden test database ${r.index} of ${r.total - 1}`)
+      : r.total > 1 ? `Test ${r.index + 1} of ${r.total} failed` : "The seal didn't break";
     let html = `<div class="msg error"><b>✘ ${label}</b></div>`;
     if (r.input && r.input.length) html += `<div class="kv"><span>Input given</span><pre class="out">${esc(r.input.join("\n"))}</pre></div>`;
     if (r.kind === "fail") html += `<pre class="out fail">${esc(r.message)}</pre>`;
     if (r.kind === "error") { html += errorHtml(r.error); markErrorLine(r.error.line); }
     if (r.kind === "error" && r.display) html += `<div class="kv"><span>Output before the error</span>${outputHtml(r.display)}</div>`;
+    if (r.images && r.images.length) html += `<div class="kv"><span>Your chart</span>${imagesHtml(r.images)}</div>`;
     setConsole(html);
   }
 
@@ -584,9 +803,11 @@
     if (!current || !runner.ready) return;
     const inputs = (current.exampleInput || "").split("\n");
     setConsole(`<div class="muted">Running the example…</div>`);
-    const r = await runner.exec({ mode: "run", code: current.example, inputs }, 5000);
+    const r = isSql(current)
+      ? await execRun(sqlPayload(current, current.example, { run: true, verify: undefined }), runMs())
+      : await execRun({ mode: "run", code: current.example, inputs, files: current.files }, runMs());
     if (r.kind === "timeout") return setConsole(timeoutHtml(r));
-    let html = `<div class="muted small">Example output${current.exampleInput ? ` (input: ${esc(current.exampleInput.replace(/\n/g, ", "))})` : ""}:</div>` + outputHtml(r.display);
+    let html = `<div class="muted small">Example output${current.exampleInput ? ` (input: ${esc(current.exampleInput.replace(/\n/g, ", "))})` : ""}:</div>` + resultHtml(r);
     if (r.error) html += errorHtml(r.error);
     setConsole(html);
   });
@@ -616,27 +837,39 @@
       stars: Math.max(prev.stars || 0, stars),
       best: used != null ? Math.min(prev.best || Infinity, Math.round(used)) : prev.best,
     };
+    const isQuiz = m.type === "quiz";
+    const e = m.empire;
+    const wasOpen = Object.assign({}, progress.opened);
+    rememberOpened();
+    const newlyOpened = EMPIRES.filter((x) => x.playable && x.requires.length && !wasOpen[x.id] && empireOpen(x));
     save();
     renderHeader();
-    setConsole(`<div class="msg ok">✔ All ${r.total} test${r.total > 1 ? "s" : ""} passed. The seal is broken!</div>`);
+    if (!isQuiz) setConsole(`<div class="msg ok">✔ All ${r.total} test${r.total > 1 ? "s" : ""} passed. The seal is broken!</div>`);
 
-    const idx = ALL.indexOf(m);
-    const next = ALL[idx + 1];
+    const list = e.missions;
+    const idx = list.indexOf(m);
+    // after the last mission, carry on with anything still unfinished in this realm
+    const next = list[idx + 1] || list.find((x) => !isDone(x.id));
     const floorDone = m.world.missions.every((x) => isDone(x.id));
     const lastOfFloor = m.world.missions[m.world.missions.length - 1] === m;
 
-    if (!next) return victory();
+    if (empireFreed(e) && firstClear) return victory(e, newlyOpened);
+    if (!next) return victory(e, []);
+    const nextWorld = list[idx + 1] ? next.world : null;
+    const explain = isQuiz && m.questions[m.questions.length - 1].explain;
 
     const note = revealed ? "You studied the solution — replay with the timer to earn stars."
       : !wasTimed ? "Practice clear! Replay with the timer for up to ★★★."
       : stars === 3 ? "Flawless! The candle had plenty left." : stars === 2 ? "Well done — a little faster next time for ★★★." : "Just in time!";
     modal({
       icon: floorDone && lastOfFloor ? m.world.icon : "🔓",
-      title: floorDone && lastOfFloor && firstClear ? `Floor ${m.world.id} cleared!` : "Seal broken!",
+      title: floorDone && lastOfFloor && firstClear ? `Floor ${m.world.num} cleared!` : isQuiz ? "Trial passed!" : "Seal broken!",
       body: `<div class="big-stars">${starHtml(stars)}</div>
         <p>${note}</p>
+        ${explain ? `<div class="msg info modal-explain">${explain}</div>` : ""}
         ${used != null ? `<p class="muted">Time used: ${fmt(used)} of ${fmt(timer.total)}</p>` : ""}
-        ${floorDone && lastOfFloor && firstClear ? `<p>You climb to <b>Floor ${next.world.id}: ${esc(next.world.name)}</b> — ${esc(next.world.topic)}.</p>` : ""}`,
+        ${newlyOpened.map((x) => `<div class="msg ok">${x.icon} <b>A new realm is open: ${esc(x.name)}</b> · ${esc(x.realm)}. You can keep climbing here, or begin it from the realms map.</div>`).join("")}
+        ${floorDone && lastOfFloor && firstClear && nextWorld ? `<p>You climb to <b>Floor ${nextWorld.num}: ${esc(nextWorld.name)}</b> — ${esc(nextWorld.topic)}.</p>` : ""}`,
       actions: [
         { label: `Next: ${next.title} →`, primary: true, fn: () => openMission(next) },
         { label: "Back to the tower", fn: () => show("map") },
@@ -645,20 +878,24 @@
     });
   }
 
-  function victory() {
+  function victory(e, opened) {
+    const after = EMPIRES.filter((x) => x.requires.includes(e.id));
+    const nextList = after.map((x) => `<li>${x.icon} <b>${esc(x.name)}</b> · ${esc(x.realm)} — ${
+      !x.playable ? "coming soon" : opened.includes(x) || empireOpen(x) ? "<b>now open!</b>" : `also needs ${stillNeeded(x).join(" & ")}`}</li>`).join("");
+    const allFreed = EMPIRES.every(empireFreed);
     modal({
-      icon: "👸", title: "You saved the Queen!",
-      body: `<p>Every seal of the Obsidian Tower is broken. Queen Ada is free — and <b>you can program in Python</b>.</p>
-        <div class="big-stars">★ ${totalStars()} / ${TOTAL_STARS}</div>
-        <p><b>Where to go next:</b></p>
-        <ul class="next-steps">
-          <li>Install Python from python.org and code in an editor like VS Code</li>
-          <li>Build small projects: a to-do app, a quiz game, a file organizer</li>
-          <li>Learn <b>Git</b> and virtual environments (<code>python -m venv</code>, <code>pip</code>)</li>
-          <li>Pick a path: web (<b>Flask</b>, <b>Django</b>), data (<b>pandas</b>, <b>matplotlib</b>), automation, or games (<b>pygame</b>)</li>
-          <li>Replay floors with the timer to collect every star</li>
-        </ul>`,
-      actions: [{ label: "Back to the tower", primary: true, fn: () => show("map") }],
+      icon: e.rulerIcon, title: allFreed ? "You saved the Empire!" : `You freed ${e.ruler}!`,
+      body: `${allFreed
+        ? `<p>The last seal is broken. ${esc(e.ruler)} and every ruler are free, and <b>the Empire is saved</b>.</p>
+          <p>You learned ${EMPIRES.filter((x) => x !== e).map((x) => esc(x.name)).join(", ").replace(/, ([^,]*)$/, " and $1")}, then put them all to work on real projects. That is the work of a data scientist.</p>`
+        : `<p>Every seal of ${esc(e.tower)} is broken. ${esc(e.ruler)} is free — and <b>you know ${esc(e.name)}</b>.</p>`}
+        <div class="big-stars">★ ${starsIn(e.missions)} / ${e.missions.length * 3}</div>
+        ${nextList ? `<p><b>The road ahead:</b></p><ul class="next-steps">${nextList}</ul>` : ""}
+        <p class="muted">Replay floors with the timer to collect every star.</p>`,
+      actions: [
+        { label: "Back to the realms", primary: true, fn: () => show("home") },
+        { label: "Stay in this tower", fn: () => show("map") },
+      ],
     });
   }
 
@@ -701,7 +938,7 @@
     a.href = URL.createObjectURL(blob);
     const now = new Date();
     const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-    a.download = `play-n-learn-progress-${day}.json`;
+    a.download = `save-the-empire-progress-${day}.json`;
     document.body.appendChild(a);
     a.click();
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);

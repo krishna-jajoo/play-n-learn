@@ -3,7 +3,8 @@
 // Shared by the browser worker (js/runner.js) and the Node validator (tools/validate.mjs).
 (function (root) {
   const PY_HARNESS = String.raw`
-import sys, io, ast, json, traceback
+import sys, io, ast, json, traceback, numbers, warnings, os, base64
+os.environ.setdefault("MPLBACKEND", "Agg")  # charts are drawn off-screen and sent to the page as images
 
 _FRIENDLY = {
     "NameError": "Python doesn't know this name. Check the spelling (Python is case-sensitive) or create the variable/function before you use it.",
@@ -48,6 +49,28 @@ class _Tee:
     def flush(self):
         pass
 
+def __prepare_plots():
+    # Start every run with no figures, and make plt.show() harmless (there's no screen in the worker).
+    plt = sys.modules.get("matplotlib.pyplot")
+    if plt is not None:
+        plt.close("all")
+        plt.show = lambda *a, **k: None
+
+def _grab_figures(limit=4):
+    plt = sys.modules.get("matplotlib.pyplot")
+    if plt is None:
+        return []
+    images = []
+    for n in plt.get_fignums()[:limit]:
+        try:
+            buf = io.BytesIO()
+            plt.figure(n).savefig(buf, format="png", dpi=72, bbox_inches="tight")
+            images.append(base64.b64encode(buf.getvalue()).decode("ascii"))
+        except Exception:
+            pass
+    plt.close("all")
+    return images
+
 def _exec_user(code, inputs):
     check, display = io.StringIO(), io.StringIO()
     queue = [str(x) for x in (inputs or [])]
@@ -59,11 +82,22 @@ def _exec_user(code, inputs):
         display.write(v + "\n")
         return v
     ns = {"__name__": "__main__", "input": _input}
+    __prepare_plots()
     old = sys.stdout
     sys.stdout = _Tee(check, display)
     err = None
+    # Warnings (e.g. pandas' SettingWithCopyWarning) are shown in the output panel, but never count as output.
+    def _warn(message, category, filename, lineno, file=None, line=None):
+        if "non-GUI backend" in str(message) or "non-interactive" in str(message):
+            return
+        where = " (line " + str(lineno) + ")" if filename == "<your code>" else ""
+        display.write("⚠ " + category.__name__ + where + ": " + str(message).strip().split("\n")[0] + "\n")
     try:
-        exec(compile(code, "<your code>", "exec"), ns)
+        with warnings.catch_warnings():
+            warnings.simplefilter("always")
+            warnings.filterwarnings("ignore", category=DeprecationWarning)
+            warnings.showwarning = _warn
+            exec(compile(code, "<your code>", "exec"), ns)
     except BaseException as e:
         err = _fmt_error(e)
     finally:
@@ -148,10 +182,39 @@ def _make_helpers(ns, out, code):
             raise _Fail("Expected output:\n" + _norm(expected) + "\n\nYour output:\n" + (_norm(out) or "(nothing was printed)"))
 
     def expect_equal(actual, expected, label="Result"):
-        num = lambda x: isinstance(x, (int, float)) and not isinstance(x, bool)
+        if type(actual).__module__ == "numpy" and hasattr(actual, "item") and getattr(actual, "ndim", 0) == 0:
+            actual = actual.item()  # NumPy scalar (np.int64, np.float64, np.bool_) -> plain Python value
+        if hasattr(actual, "shape") and type(actual).__module__ == "numpy":
+            raise _Fail(label + "\n  expected: " + repr(expected) + "\n  got a NumPy array: " + repr(actual))
+        num = lambda x: isinstance(x, numbers.Number) and not isinstance(x, bool)
         same_kind = type(actual) is type(expected) or (num(actual) and num(expected))
         if actual != expected or not same_kind:
             raise _Fail(label + "\n  expected: " + repr(expected) + "\n  got:      " + repr(actual))
+
+    def must_not_use(*kinds):
+        for k in kinds:
+            if _has(k):
+                raise _Fail("Solve this without " + LABEL.get(k, "a " + k + " loop" if k in ("for", "while") else k) +
+                            ": use NumPy's whole-array operations instead.")
+
+    def expect_array(actual, expected, label="Result", tol=1e-6, kind=None):
+        # kind: allowed dtype kinds, e.g. "i" (int), "f" (float), "b" (bool), "U" (text), "iu"
+        import numpy as np
+        if not isinstance(actual, np.ndarray):
+            raise _Fail(label + "\n  expected a NumPy array, but got " + type(actual).__name__ + ": " + repr(actual)[:200] +
+                        "\n  (wrap it with np.array(...) or use NumPy functions)")
+        exp = np.asarray(expected)
+        if actual.shape != exp.shape:
+            raise _Fail(label + "\n  expected shape: " + str(exp.shape) + "\n  got shape:      " + str(actual.shape) +
+                        "\n  expected:\n" + np.array2string(exp) + "\n  got:\n" + np.array2string(actual))
+        if kind and actual.dtype.kind not in kind:
+            names = {"i": "int", "u": "unsigned int", "f": "float", "b": "bool", "U": "str"}
+            raise _Fail(label + "\n  expected dtype " + "/".join(names.get(k, k) for k in kind) + ", got " + str(actual.dtype))
+        numeric = actual.dtype.kind in "biuf" and exp.dtype.kind in "biuf"
+        ok = np.allclose(actual, exp, rtol=tol, atol=tol, equal_nan=True) if numeric else np.array_equal(actual, exp)
+        if not ok:
+            raise _Fail(label + "\n  expected:\n" + np.array2string(exp, precision=4) + "\n  got:\n" + np.array2string(actual, precision=4))
+        return actual
 
     def expect_var(name, value=_MISSING, type_=None):
         if name not in ns:
@@ -188,6 +251,125 @@ def _make_helpers(ns, out, code):
             raise _Fail("Expected " + exc.__name__ + " but got " + type(e).__name__ + ": " + str(e))
         raise _Fail("Expected " + exc.__name__ + " to be raised, but nothing was raised.")
 
+    def rerun(src, inputs=None):
+        # Run a variant of the learner's program (e.g. with other starting values); return what it prints.
+        ns2, out2, disp2, err2 = _exec_user(src, inputs)
+        if err2:
+            raise _Fail("With other values your program fails: " + err2["type"] + ": " + err2["message"])
+        return out2
+
+    def expect_close(actual, expected, label="Result", tol=1e-6):
+        def close(a, b):
+            if hasattr(a, "shape") and hasattr(a, "tolist"):
+                a = a.tolist()  # NumPy array or scalar -> Python values
+            if hasattr(b, "shape") and hasattr(b, "tolist"):
+                b = b.tolist()
+            if isinstance(b, (list, tuple)):
+                return isinstance(a, (list, tuple)) and len(a) == len(b) and all(close(x, y) for x, y in zip(a, b))
+            if isinstance(b, dict):
+                return isinstance(a, dict) and a.keys() == b.keys() and all(close(a[k], b[k]) for k in b)
+            try:
+                return abs(float(a) - float(b)) <= tol * max(1.0, abs(float(b)))
+            except (TypeError, ValueError):
+                return a == b
+        if not close(actual, expected):
+            raise _Fail(label + "\n  expected: " + repr(expected) + "\n  got:      " + repr(actual))
+
+    def _show(obj):
+        try:
+            return obj.head(15).to_string() + ("\n  ..." if len(obj) > 15 else "")
+        except Exception:
+            return repr(obj)[:600]
+
+    def _diff(label, e, a, why=""):
+        return _Fail(label + ("\n  " + why if why else "") + "\n  expected:\n" + _show(e) + "\n  got:\n" + _show(a))
+
+    def expect_frame(actual, expected, label="Result", check_index=True, check_dtype=False, tol=1e-6):
+        import pandas as pd
+        if not isinstance(actual, pd.DataFrame):
+            raise _Fail(label + "\n  expected a DataFrame, but got " + type(actual).__name__ + ": " + repr(actual)[:300])
+        e = expected if isinstance(expected, pd.DataFrame) else pd.DataFrame(expected)
+        a = actual
+        if not check_index:
+            a, e = a.reset_index(drop=True), e.reset_index(drop=True)
+        if [str(c) for c in a.columns] != [str(c) for c in e.columns]:
+            raise _Fail(label + "\n  expected columns: " + str(list(e.columns)) + "\n  got columns:      " + str(list(a.columns)))
+        if a.shape != e.shape:
+            raise _diff(label, e, a, "expected " + str(e.shape[0]) + " rows, got " + str(a.shape[0]))
+        try:
+            pd.testing.assert_frame_equal(a, e, check_dtype=check_dtype, check_exact=False, rtol=tol, atol=tol,
+                                          check_index_type=False, check_column_type=False, check_names=False)
+        except AssertionError as err:
+            raise _diff(label, e, a, str(err).strip().split("\n")[0])
+        return actual
+
+    def expect_series(actual, expected, label="Result", check_index=True, check_dtype=False, tol=1e-6):
+        import pandas as pd
+        if not isinstance(actual, pd.Series):
+            raise _Fail(label + "\n  expected a Series, but got " + type(actual).__name__ + ": " + repr(actual)[:300])
+        e = expected if isinstance(expected, pd.Series) else pd.Series(expected)
+        a = actual
+        if not check_index:
+            a, e = a.reset_index(drop=True), e.reset_index(drop=True)
+        if len(a) != len(e):
+            raise _diff(label, e, a, "expected " + str(len(e)) + " values, got " + str(len(a)))
+        try:
+            pd.testing.assert_series_equal(a, e, check_dtype=check_dtype, check_exact=False, rtol=tol, atol=tol,
+                                           check_index_type=False, check_names=False)
+        except AssertionError as err:
+            raise _diff(label, e, a, str(err).strip().split("\n")[0])
+        return actual
+
+    # ───── chart inspection (matplotlib / seaborn)
+    def expect_fig(n_axes=None):
+        plt = sys.modules.get("matplotlib.pyplot")
+        if plt is None or not plt.get_fignums():
+            raise _Fail("No chart was drawn. Create one with fig, ax = plt.subplots() and plot something on it.")
+        fig = plt.figure(plt.get_fignums()[-1])
+        if n_axes is not None and len(fig.axes) != n_axes:
+            raise _Fail("Your figure should have " + str(n_axes) + " chart" + ("" if n_axes == 1 else "s") + " (axes), but it has " + str(len(fig.axes)) + ".")
+        fig.canvas.draw()
+        return fig
+
+    def bars_of(ax, horizontal=False):
+        from matplotlib.patches import Rectangle
+        rects = [p for p in ax.patches if isinstance(p, Rectangle)]
+        return [float(r.get_width() if horizontal else r.get_height()) for r in rects]
+
+    def lines_of(ax):
+        # every Line2D on the axes (plotted lines, axhline/axvline reference lines); grid lines aren't included
+        return list(ax.get_lines())
+
+    def points_of(ax, i=0):
+        import numpy as np
+        if len(ax.collections) <= i:
+            raise _Fail("No scatter points were found on the chart. Use ax.scatter(x, y).")
+        return np.asarray(ax.collections[i].get_offsets())
+
+    def legend_of(ax):
+        leg = ax.get_legend()
+        if leg is None:
+            raise _Fail("The chart needs a legend: give each series a label=… and call ax.legend().")
+        return [t.get_text() for t in leg.get_texts()]
+
+    def ticklabels_of(ax, axis="x"):
+        ax.figure.canvas.draw()
+        labels = ax.get_xticklabels() if axis == "x" else ax.get_yticklabels()
+        return [t.get_text() for t in labels]
+
+    def hexcolor(c):
+        from matplotlib.colors import to_hex
+        return to_hex(c)
+
+    def expect_text(actual, label, contains=None, exact=None):
+        if not actual:
+            raise _Fail("Your chart is missing its " + label + ".")
+        if exact is not None and actual != exact:
+            raise _Fail("The chart's " + label + " should be " + repr(exact) + ", not " + repr(actual) + ".")
+        if contains is not None and contains.lower() not in actual.lower():
+            raise _Fail("The chart's " + label + " should mention " + repr(contains) + " (it is " + repr(actual) + ").")
+        return actual
+
     return {k: v for k, v in locals().items() if not k.startswith("_") and callable(v)}
 
 def _check(code, test):
@@ -202,21 +384,163 @@ def _check(code, test):
     old = sys.stdout
     sys.stdout = io.StringIO()
     try:
-        exec(test.get("code") or "", tns)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            exec(test.get("code") or "", tns)
     except AssertionError as e:
-        return dict(base, ok=False, kind="fail", message=str(e) or "A check failed.")
+        return dict(base, ok=False, kind="fail", message=str(e) or "A check failed.", images=_grab_figures())
     except BaseException as e:
-        return dict(base, ok=False, kind="error", error=_fmt_error(e))
+        return dict(base, ok=False, kind="error", error=_fmt_error(e), images=_grab_figures())
     finally:
         sys.stdout = old
+    plt = sys.modules.get("matplotlib.pyplot")
+    if plt is not None:
+        plt.close("all")
     return dict(base, ok=True)
+
+# ───────────── SQL missions: the learner writes SQL, checked against a reference query on real SQLite databases
+_SQL_FRIENDLY = [
+    ("no such column", "There's no column with that name. Check the spelling, and which table it lives in (open the Tables panel). When joining, write table.column."),
+    ("no such table", "There's no table with that name. Check the spelling in the Tables panel."),
+    ("ambiguous column name", "Two of the joined tables have a column with this name. Say which one you mean: table.column (or alias.column)."),
+    ("misuse of aggregate", "Aggregates like SUM, COUNT or AVG can't go in WHERE. Filter groups with HAVING, or compute the aggregate in a subquery."),
+    ("only execute one statement", "Write just one query here (one SELECT … statement)."),
+    ("incomplete input", "The query ends too early. Is a bracket or quote not closed?"),
+    ("syntax error", "SQLite couldn't read the query near that word. Check the order: SELECT … FROM … JOIN … WHERE … GROUP BY … HAVING … ORDER BY … LIMIT, commas between columns, and quotes around text values ('like this')."),
+    ("unrecognized token", "There's a stray character. Text values use single quotes: 'Mage'."),
+    ("wrong number of arguments", "A function got the wrong number of values inside its brackets."),
+    ("datatype mismatch", "A value has the wrong type for that column."),
+    ("unique constraint", "That would create a duplicate where values must be unique (e.g. an id that already exists)."),
+    ("not null constraint", "A required column was left empty."),
+]
+
+def _sql_error(e):
+    msg = str(e)
+    friendly = "Something went wrong while running your query."
+    for key, text in _SQL_FRIENDLY:
+        if key in msg.lower():
+            friendly = text
+            break
+    return {"type": "SQL error", "message": msg, "line": None, "friendly": friendly}
+
+def _sql_db(setup):
+    import sqlite3
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(setup or "")
+    return conn
+
+def _sql_query(conn, sql):
+    cur = conn.execute(sql.strip())
+    cols = [d[0] for d in (cur.description or [])]
+    return cols, cur.fetchall()
+
+def _sql_result(setup, sql, verify=None):
+    # Returns (columns, rows). With verify, sql is a script that changes the database, then verify is queried.
+    conn = _sql_db(setup)
+    try:
+        if verify:
+            conn.executescript(sql)
+            return _sql_query(conn, verify)
+        return _sql_query(conn, sql)
+    finally:
+        conn.close()
+
+def _sql_cell(v):
+    if v is None:
+        return "NULL"
+    if isinstance(v, float):
+        return ("%.6f" % v).rstrip("0").rstrip(".") if v != int(v) or abs(v) >= 1e15 else str(int(v)) + ".0"
+    return str(v)
+
+def _sql_table(cols, rows, limit=40):
+    if not cols:
+        return "(the query ran, but returned no columns)"
+    cells = [[_sql_cell(v) for v in r] for r in rows[:limit]]
+    w = [max([len(str(c))] + [len(r[i]) for r in cells]) for i, c in enumerate(cols)]
+    line = lambda vals: " | ".join(str(v).ljust(w[i]) for i, v in enumerate(vals)).rstrip()
+    out = [line(cols), "-+-".join("-" * x for x in w)] + [line(r) for r in cells]
+    if len(rows) > limit:
+        out.append("… " + str(len(rows) - limit) + " more rows")
+    out.append("(" + str(len(rows)) + " row" + ("" if len(rows) == 1 else "s") + ")")
+    return "\n".join(out)
+
+def _sql_compact(rows):
+    return "\n".join(", ".join(_sql_cell(v) for v in r) for r in rows) if rows else "(no rows)"
+
+def _sql_norm(rows):
+    def fix(v):
+        if isinstance(v, bool):
+            return int(v)
+        if isinstance(v, (int, float)):
+            return round(float(v), 6)
+        return v
+    return [tuple(fix(v) for v in r) for r in rows]
+
+def _sql_strip(sql):
+    import re
+    s = re.sub(r"--[^\n]*", " ", sql)
+    s = re.sub(r"/\*.*?\*/", " ", s, flags=re.S)
+    s = re.sub(r"'(?:[^']|'')*'", "''", s)
+    return " ".join(s.upper().split())
+
+def _sql_judge(p):
+    import re
+    sql = p.get("sql") or ""
+    setup = p.get("setup") or ""
+    verify = p.get("verify")
+    if p.get("run"):
+        try:
+            cols, rows = _sql_result(setup, sql, verify)
+        except Exception as e:
+            return {"ok": False, "display": "", "error": _sql_error(e)}
+        return {"ok": True, "display": _sql_table(cols, rows), "compact": _sql_compact(rows), "error": None}
+    if not _sql_strip(sql).strip(" ;"):
+        return {"ok": False, "kind": "fail", "message": "Write a query first.", "display": "", "input": [], "index": 0, "total": 1}
+    plain = _sql_strip(sql)
+    for word in p.get("mustUse") or []:
+        if not re.search(r"\b" + re.escape(word.upper()) + r"\b", plain):
+            return {"ok": False, "kind": "fail", "message": "This mission must use " + word.upper() + ".", "display": "", "input": [], "index": 0, "total": 1}
+    for word in p.get("mustNotUse") or []:
+        if re.search(r"\b" + re.escape(word.upper()) + r"\b", plain):
+            return {"ok": False, "kind": "fail", "message": "Solve this one without " + word.upper() + ".", "display": "", "input": [], "index": 0, "total": 1}
+    dbs = [("the kingdom database", setup)] + [("a hidden test database", setup + "\n" + v) for v in (p.get("variants") or [])]
+    for i, (label, db) in enumerate(dbs):
+        exp_cols, exp_rows = _sql_result(db, p.get("solution") or "", verify)
+        try:
+            cols, rows = _sql_result(db, sql, verify)
+        except Exception as e:
+            return {"ok": False, "kind": "error", "error": _sql_error(e), "display": "", "input": [], "index": i, "total": len(dbs)}
+        shown = _sql_table(cols, rows, limit=15)
+        def fail(msg):
+            return {"ok": False, "kind": "fail", "message": msg + "\n\nExpected (on " + label + "):\n" + _sql_table(exp_cols, exp_rows, limit=15) + "\n\nYour result:\n" + shown,
+                    "display": "", "input": [], "index": i, "total": len(dbs)}
+        if len(cols) != len(exp_cols):
+            return fail("Your query returns " + str(len(cols)) + " column" + ("" if len(cols) == 1 else "s") + ", but " + str(len(exp_cols)) + " are expected.")
+        if p.get("checkNames") and [c.lower() for c in cols] != [c.lower() for c in exp_cols]:
+            return fail("Name the columns exactly: " + ", ".join(exp_cols) + " (use AS to rename).")
+        if len(rows) != len(exp_rows):
+            return fail("Your query returns " + str(len(rows)) + " row" + ("" if len(rows) == 1 else "s") + ", but " + str(len(exp_rows)) + " are expected.")
+        a, b = _sql_norm(rows), _sql_norm(exp_rows)
+        if p.get("ordered"):
+            if a != b:
+                same = sorted(a, key=repr) == sorted(b, key=repr)
+                return fail("The rows are right but in the wrong order: check your ORDER BY." if same else "Some values are different.")
+        elif sorted(a, key=repr) != sorted(b, key=repr):
+            return fail("Some values are different.")
+    return {"ok": True, "total": len(dbs)}
 
 def __judge(payload):
     p = json.loads(payload)
     code = p.get("code", "")
+    if p.get("mode") == "sql":
+        return json.dumps(_sql_judge(p))
+    # data files the mission provides (e.g. CSVs for pandas): written fresh before every run
+    for name, content in (p.get("files") or {}).items():
+        with open(name, "w", encoding="utf-8") as f:
+            f.write(content)
     if p.get("mode") == "run":
         ns, out, disp, err = _exec_user(code, p.get("inputs"))
-        return json.dumps({"ok": err is None, "display": disp, "error": err})
+        return json.dumps({"ok": err is None, "display": disp, "error": err, "images": _grab_figures()})
     try:
         compile(code, "<your code>", "exec")
     except SyntaxError as e:
