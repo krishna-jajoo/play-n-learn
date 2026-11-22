@@ -223,6 +223,13 @@ body.logged-out .stat-pill, body.logged-out .switch, body.logged-out .topbar-rig
 .lesson ul, .lesson ol { padding-left: 22px; }
 .example { margin: 16px 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
 .example-head { display: flex; justify-content: space-between; align-items: center; padding: 6px 8px 6px 12px; background: var(--bg-2); font-size: .8rem; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; }
+.example > summary { list-style: none; cursor: pointer; user-select: none; }
+.example > summary::-webkit-details-marker { display: none; }
+.example-title::before { content: "▸"; display: inline-block; margin-right: 8px; transition: transform .15s; }
+.example[open] .example-title::before { transform: rotate(90deg); }
+.example-hint { text-transform: none; letter-spacing: 0; font-size: .75rem; opacity: .75; margin-left: 4px; }
+.example > summary:hover { color: var(--text, #fff); }
+.example:not([open]) > summary { border-bottom: 0; }
 .example pre { margin: 0; padding: 12px 14px; background: #0b0e22; font: .88rem/1.6 var(--mono); overflow-x: auto; white-space: pre; }
 .task { background: linear-gradient(180deg, #2a2440, #1f1c38); border: 1px solid #5a4a8a; border-radius: 12px; padding: 14px 16px; margin: 16px 0; }
 .task h3 { margin: 0 0 6px; font: 700 1.05rem var(--serif); color: var(--gold); }

@@ -1774,6 +1774,279 @@ Win rate                 87.7%</pre>`,
 
     // ───────────────────────────── FLOOR 8
     {
+      id: 17, name: "The Hall of Many Paths", topic: "iterables, walking dictionaries, unpacking & one-way iterators", time: 480, icon: "🛤️",
+      intro: "Every loop you've written walked down a path: a string, a list, a range. In this hall you learn what a path really is, and the tricks for walking it.",
+      missions: [
+        {
+          id: "17-1", title: "Anything Can Be Walked",
+          story: "The hall has many paths: paths of letters, of words, of numbers. One kind of loop walks them all.",
+          lesson: `<p>An <b>iterable</b> is anything a <code>for</code> loop can walk through, one item at a time:</p>
+            <ul><li>a <b>string</b> gives its letters: <code>for ch in "abc"</code></li>
+            <li>a <b>list</b> or <b>tuple</b> gives its items, in order</li>
+            <li>a <b>set</b> gives its items in no particular order</li>
+            <li>a <b>dictionary</b> gives its <b>keys</b></li>
+            <li><code>range(5)</code> gives 0, 1, 2, 3, 4</li></ul>
+            <p>Many built-ins accept <b>any</b> iterable: <code>list()</code>, <code>set()</code>, <code>sorted()</code>, <code>sum()</code>, <code>min()</code>, <code>max()</code>, <code>reversed()</code>, <code>"-".join()</code>, and the <code>in</code> test. An <code>int</code> is <b>not</b> iterable: <code>for x in 42</code> is a TypeError.</p>`,
+          example: d`
+            print(list("cat"))              # ['c', 'a', 't']
+            print(sorted({3, 1, 2}))         # [1, 2, 3]
+            print("-".join("abc"))           # a-b-c   (join walks the string)
+            print(list(reversed([1, 2, 3]))) # [3, 2, 1]
+            print("a" in "banana", 4 in range(5))`,
+          sampleInput: "Dragon cave gold",
+          task: `Read a line of words. Print four lines:<br>
+            1. the letters of the <b>first</b> word joined by <code>-</code><br>
+            2. the words in <b>reverse</b> order, joined by spaces<br>
+            3. all the <b>distinct</b> letters used in the whole line, lowercased, sorted, joined with nothing between them<br>
+            4. the total number of letters (spaces don't count)`,
+          starter: d`
+            words = input().split()
+            `,
+          solution: d`
+            words = input().split()
+            print("-".join(words[0]))
+            print(" ".join(reversed(words)))
+            letters = "".join(words)
+            print("".join(sorted(set(letters.lower()))))
+            print(len(letters))`,
+          hints: ["\"-\".join(word) walks the word letter by letter", "\" \".join(reversed(words))", "\"\".join(words) glues the words; set(...) keeps each letter once; sorted(...) orders them"],
+          tests: [
+            { input: ["Dragon cave gold"], code: d`expect_output("D-r-a-g-o-n\ngold cave Dragon\nacdeglnorv\n14")` },
+            { input: ["Hi"], code: d`expect_output("H-i\nHi\nhi\n2")` },
+            { input: ["aa AB ba"], code: d`expect_output("a-a\nba AB aa\nab\n6")` },
+          ],
+        },
+        {
+          id: "17-2", title: "Walking the Treasury",
+          story: "The treasurer keeps a dictionary of who holds how much gold. Walk it three ways: by keys, by values, and by pairs.",
+          lesson: `<p>Walking a dictionary:</p>
+            <ul><li><code>for name in chest:</code> walks the <b>keys</b> (same as <code>chest.keys()</code>)</li>
+            <li><code>for gold in chest.values():</code> walks the <b>values</b></li>
+            <li><code>for name, gold in chest.items():</code> walks <b>(key, value) pairs</b>, unpacked into two names</li></ul>
+            <p>Dictionaries keep the order in which keys were added. <code>sum(chest.values())</code> adds all the values.</p>`,
+          example: d`
+            chest = {"ann": 30, "bo": 12}
+            for name in chest:
+                print(name)
+            print(sum(chest.values()))
+            for name, gold in chest.items():
+                print(name, "has", gold)`,
+          sampleInput: "ann:30 bo:12 cy:30 dee:5",
+          task: `Read a line of <code>name:gold</code> entries. Build a dictionary (gold as an int), then print:<br>
+            <code>Names: ann, bo, cy, dee</code> (in the order given)<br>
+            <code>Total: 77</code><br>
+            <code>Richest: ann</code> (the first one with the most gold)<br>
+            <code>Above average: ann, cy</code> (gold strictly above the average, in order; or <code>Above average: none</code>)<br>
+            Walk the dictionary with <code>.items()</code> or <code>.values()</code> somewhere.`,
+          starter: d`
+            chest = {}
+            for entry in input().split():
+                name, gold = entry.split(":")
+                chest[name] = int(gold)
+            `,
+          solution: d`
+            chest = {}
+            for entry in input().split():
+                name, gold = entry.split(":")
+                chest[name] = int(gold)
+            print("Names: " + ", ".join(chest))
+            total = sum(chest.values())
+            print("Total:", total)
+            richest = None
+            for name, gold in chest.items():
+                if richest is None or gold > chest[richest]:
+                    richest = name
+            print("Richest:", richest)
+            average = total / len(chest)
+            above = []
+            for name, gold in chest.items():
+                if gold > average:
+                    above.append(name)
+            print("Above average: " + (", ".join(above) if above else "none"))`,
+          hints: ["\", \".join(chest) walks the keys", "sum(chest.values())", "for name, gold in chest.items(): keep the name whose gold is biggest (use > so the first one wins a tie)", "average = total / len(chest)"],
+          tests: [
+            { input: ["ann:30 bo:12 cy:30 dee:5"], code: d`
+              assert ".items()" in __code__ or ".values()" in __code__, "Walk the dictionary with .items() or .values()."
+              expect_output("Names: ann, bo, cy, dee\nTotal: 77\nRichest: ann\nAbove average: ann, cy")` },
+            { input: ["kit:7"], code: d`expect_output("Names: kit\nTotal: 7\nRichest: kit\nAbove average: none")` },
+            { input: ["a:1 b:9 c:9 d:1"], code: d`expect_output("Names: a, b, c, d\nTotal: 20\nRichest: b\nAbove average: b, c")` },
+          ],
+        },
+        {
+          id: "17-3", title: "Unpack the Bundle",
+          story: "The race results arrive as one long line. Unpack it: the winner, the last runner, and everyone in between.",
+          lesson: `<p><b>Unpacking</b> spreads an iterable over several names:</p>
+            <ul><li><code>a, b = (3, 4)</code> · swap: <code>a, b = b, a</code></li>
+            <li>in loops: <code>for name, score in [("ann", 3), ("bo", 5)]:</code></li>
+            <li>a <b>star</b> collects "the rest" into a list: <code>first, *rest = items</code>, <code>*init, last = items</code>, <code>first, *middle, last = items</code></li>
+            <li>a star in a call spreads items as arguments: <code>print(*items, sep=", ")</code></li></ul>
+            <p>The number of names must match, unless one of them has a star.</p>`,
+          example: d`
+            first, *rest = "abcd"
+            print(first, rest)               # a ['b', 'c', 'd']
+            head, *middle, tail = [1, 2, 3, 4]
+            print(head, middle, tail)        # 1 [2, 3] 4
+            print(*[1, 2, 3], sep=" > ")     # 1 > 2 > 3`,
+          sampleInput: "Mara Bo Kit Elsa Tam",
+          task: `Read the runners' names in finishing order (at least 2). Using star unpacking, print:<br>
+            <code>Winner: Mara</code><br><code>Last: Tam</code><br>
+            <code>Middle: Bo, Kit, Elsa</code> (or <code>Middle: none</code>)<br>
+            and finally all the names joined by <code> &gt; </code>, using <code>print(*names, sep=" > ")</code>.`,
+          starter: d`
+            names = input().split()
+            `,
+          solution: d`
+            names = input().split()
+            winner, *middle, last = names
+            print("Winner:", winner)
+            print("Last:", last)
+            print("Middle: " + (", ".join(middle) if middle else "none"))
+            print(*names, sep=" > ")`,
+          hints: ["winner, *middle, last = names", "middle is always a list (maybe empty)", "print(*names, sep=\" > \")"],
+          tests: [
+            { input: ["Mara Bo Kit Elsa Tam"], code: d`
+              import ast
+              assert any(isinstance(n, ast.Starred) for n in ast.walk(ast.parse(__code__))), "Use star unpacking, like winner, *middle, last = names."
+              expect_output("Winner: Mara\nLast: Tam\nMiddle: Bo, Kit, Elsa\nMara > Bo > Kit > Elsa > Tam")` },
+            { input: ["Ann Bo"], code: d`expect_output("Winner: Ann\nLast: Bo\nMiddle: none\nAnn > Bo")` },
+            { input: ["X Y Z"], code: d`expect_output("Winner: X\nLast: Z\nMiddle: Y\nX > Y > Z")` },
+          ],
+        },
+        {
+          id: "17-4", title: "The One-Way Path",
+          story: "Some paths crumble behind you: walk them once and they're gone. The scouts must read the heading first, then the rest.",
+          lesson: `<p><code>iter(x)</code> turns any iterable into an <b>iterator</b>: a one-way path that remembers where it is. <code>next(it)</code> takes the next item; <code>next(it, default)</code> returns the default instead of crashing when the path is empty. A <code>for</code> loop over the iterator carries on from where <code>next</code> stopped.</p>
+            <p>Iterators can be walked <b>only once</b>. <code>reversed()</code>, <code>zip()</code>, <code>enumerate()</code> and file lines all behave like this: a second loop finds nothing. If you need the items twice, make a list first: <code>items = list(it)</code>.</p>`,
+          example: d`
+            it = iter(["title", 4, 5])
+            print(next(it))        # title
+            for x in it:
+                print(x)           # 4, then 5
+            print(next(it, "empty"))
+            r = reversed([1, 2, 3])
+            print(list(r), list(r))   # [3, 2, 1] []`,
+          sampleInput: "harvest 4 7 1 8",
+          task: `Read a line: the first word is a heading, the rest are whole numbers. With <code>it = iter(words)</code>, take the heading with <code>next</code>, then loop over the <b>rest of the same iterator</b>. Print the heading in capitals, then <code>Count: n</code>, <code>Total: t</code> and <code>Largest: m</code> (or <code>Largest: none</code> when there are no numbers).`,
+          starter: d`
+            words = input().split()
+            it = iter(words)
+            `,
+          solution: d`
+            words = input().split()
+            it = iter(words)
+            heading = next(it)
+            count, total, largest = 0, 0, None
+            for w in it:
+                n = int(w)
+                count += 1
+                total += n
+                if largest is None or n > largest:
+                    largest = n
+            print(heading.upper())
+            print("Count:", count)
+            print("Total:", total)
+            print("Largest:", "none" if largest is None else largest)`,
+          hints: ["heading = next(it)", "for w in it: continues after the heading", "Keep count, total and largest as you go; largest starts as None"],
+          tests: [
+            { input: ["harvest 4 7 1 8"], code: d`
+              assert "next(" in __code__, "Take the heading with next(it)."
+              expect_output("HARVEST\nCount: 4\nTotal: 20\nLargest: 8")` },
+            { input: ["empty"], code: d`expect_output("EMPTY\nCount: 0\nTotal: 0\nLargest: none")` },
+            { input: ["debts -5 -2 -9"], code: d`expect_output("DEBTS\nCount: 3\nTotal: -16\nLargest: -2")` },
+          ],
+        },
+        {
+          id: "17-5", type: "quiz", title: "Riddles of the Paths",
+          story: "The pathfinders' riddles about iterables.",
+          lesson: `<p>Know what each iterable gives you (letters, items, keys), what unpacking does with the leftovers, and which paths can be walked only once.</p>`,
+          questions: [
+            { q: "What does this print?", predict: true, code: d`
+                d = {"a": 1, "b": 2}
+                print(list(d), sum(d.values()))`,
+              choices: ["['a', 'b'] 3", "[1, 2] 3", "[('a', 1), ('b', 2)] 3", "['a', 'b'] ab"], answer: 0,
+              explain: "Walking a dictionary gives its keys; .values() gives the values." },
+            { q: "What does this print?", predict: true, code: d`
+                first, *rest = "abc"
+                print(first, rest)`,
+              choices: ["a ['b', 'c']", "a bc", "['a'] ['b', 'c']", "a ('b', 'c')"], answer: 0,
+              explain: "The starred name always collects a list." },
+            { q: "What does this print?", predict: true, code: d`
+                r = reversed([1, 2, 3])
+                print(list(r), list(r))`,
+              choices: ["[3, 2, 1] []", "[3, 2, 1] [3, 2, 1]", "[3, 2, 1] [1, 2, 3]", "[] []"], answer: 0,
+              explain: "reversed() returns an iterator: once walked, it's empty." },
+            { q: "Which of these is <b>not</b> iterable?",
+              choices: ["42", "\"42\"", "[42]", "range(42)"], answer: 0,
+              explain: "An int is a single value. for x in 42 raises TypeError: 'int' object is not iterable." },
+            { q: "What does this print?", predict: true, code: d`
+                a, b = 1, 2
+                a, b = b, a + b
+                print(a, b)`,
+              choices: ["2 3", "2 4", "1 3", "3 3"], answer: 0,
+              explain: "The right side is computed first (2 and 3), then both names are assigned at once." },
+            { q: "What does this print?", predict: true, code: d`
+                it = iter([10, 20])
+                print(next(it), next(it), next(it, "done"))`,
+              choices: ["10 20 done", "10 10 10", "10 20 20", "an error"], answer: 0,
+              explain: "next with a default returns the default when the iterator is used up." },
+          ],
+        },
+        {
+          id: "17-6", boss: true, time: 720, title: "The Treasure Map",
+          story: "An old map lists places and the coins buried in each. Read it line by line, total each place, and trace the route.",
+          lesson: `<p>Everything from this hall at once: walk the lines, <b>unpack</b> each one into a place and the rest (<code>place, *coins = line.split()</code>), walk a dictionary's <b>items</b>, and spread a list into <code>print</code> with a star.</p>`,
+          example: d`
+            line = "cave 5 10 3"
+            place, *coins = line.split()
+            print(place, coins)        # cave ['5', '10', '3']
+            total = 0
+            for c in coins:
+                total += int(c)
+            print(total)`,
+          sampleInput: "Old Pirate Map\ncave 5 10 3\nriver\ntower 7 11\nend",
+          task: `The first line is the map's name. Each following line is a place followed by its coins (maybe none), until a line <code>end</code>. Print:<br>
+            <code>== Old Pirate Map ==</code><br>
+            one line per place, in order: <code>cave: 18</code><br>
+            <code>Best: tower (18)</code>: the place with the most coins (the <b>last</b> one wins a tie, so ties go to deeper places)<br>
+            <code>Route: cave &gt; river &gt; tower</code><br>
+            If there are no places, print <code>No treasure</code> after the title instead.`,
+          starter: d`
+            title = input()
+            places = {}
+            `,
+          solution: d`
+            title = input()
+            places = {}
+            while True:
+                line = input()
+                if line == "end":
+                    break
+                place, *coins = line.split()
+                total = 0
+                for c in coins:
+                    total += int(c)
+                places[place] = total
+            print(f"== {title} ==")
+            if not places:
+                print("No treasure")
+            else:
+                best = None
+                for place, total in places.items():
+                    print(f"{place}: {total}")
+                    if best is None or total >= places[best]:
+                        best = place
+                print(f"Best: {best} ({places[best]})")
+                print("Route: " + " > ".join(places))`,
+          hints: ["while True: line = input(); stop at \"end\"", "place, *coins = line.split(); coins is a list of strings", "Use >= when comparing so the last place wins a tie", "print(\"Route: \" + \" > \".join(places)) or print with a star"],
+          tests: [
+            { input: ["Old Pirate Map", "cave 5 10 3", "river", "tower 7 11", "end"], code: d`expect_output("== Old Pirate Map ==\ncave: 18\nriver: 0\ntower: 18\nBest: tower (18)\nRoute: cave > river > tower")` },
+            { input: ["Blank", "end"], code: d`expect_output("== Blank ==\nNo treasure")` },
+            { input: ["Isle", "beach 1", "hill 9 9", "dock 2 2 2", "end"], code: d`expect_output("== Isle ==\nbeach: 1\nhill: 18\ndock: 6\nBest: hill (18)\nRoute: beach > hill > dock")` },
+          ],
+        },
+      ],
+    },
+    {
       id: 8, name: "The Spell Workshop", topic: "functions, parameters, return & recursion", time: 540, icon: "🪄",
       intro: "Write a spell once, cast it forever. Functions are reusable magic.",
       missions: [
@@ -2165,6 +2438,397 @@ Win rate                 87.7%</pre>`,
     },
 
     // ───────────────────────────── FLOOR 9
+    {
+      id: 18, name: "The Hall of Small Secrets", topic: "match/case, short-circuits & None, copies & list methods, divmod, nonlocal, frozenset", time: 600, icon: "🕯️",
+      intro: "Small spells win big battles. This hall hides the little tools that experienced Python wizards use every day.",
+      missions: [
+        {
+          id: "18-1", title: "Many Doors, One Key",
+          story: "The castle's talking door understands commands: go, take, say, quit. Teach it to recognise each shape of command.",
+          lesson: `<p><code>match</code> compares a value against <b>patterns</b>, top to bottom, and runs the first that fits:</p>
+            <pre class="out">match words:
+    case ["go", direction]:        # exactly 2 items; captures the 2nd
+        ...
+    case ["take", *items]:         # "take" then any number of items
+        ...
+    case ["quit"] | ["exit"]:      # either pattern
+        ...
+    case ["go", d] if d == "up":   # a guard: an extra condition
+        ...
+    case _:                        # anything else
+        ...</pre>
+            <p>Order matters: put specific patterns before general ones. Patterns can match lists, tuples, numbers and strings.</p>`,
+          example: d`
+            def describe(point):
+                match point:
+                    case (0, 0):
+                        return "origin"
+                    case (0, y):
+                        return f"on the y axis at {y}"
+                    case (x, y) if x == y:
+                        return "on the diagonal"
+                    case _:
+                        return "somewhere else"
+
+            for p in [(0, 0), (0, 5), (3, 3), (1, 2)]:
+                print(p, describe(p))`,
+          task: `Write <code>command(text)</code> using <code>match</code> on <code>text.split()</code>, returning:<br>
+            • <code>go &lt;dir&gt;</code> with dir north, south, east or west → <code>"You walk north."</code>; any other <code>go &lt;x&gt;</code> → <code>"You can't go that way."</code><br>
+            • <code>take</code> alone → <code>"Take what?"</code>; <code>take &lt;item&gt;</code> → <code>"You take the sword."</code>; <code>take a b c</code> → <code>"You take a, b, c."</code><br>
+            • <code>say &lt;words…&gt;</code> → <code>'You shout: "HELLO THERE"'</code> (the words in capitals)<br>
+            • <code>quit</code> or <code>exit</code> → <code>"Goodbye."</code>; anything else → <code>"I don't understand."</code>`,
+          starter: d`
+            def command(text):
+                match text.split():
+                    case _:
+                        return "I don't understand."
+
+            print(command("go north"))
+            `,
+          solution: d`
+            def command(text):
+                match text.split():
+                    case ["go", direction] if direction in ("north", "south", "east", "west"):
+                        return f"You walk {direction}."
+                    case ["go", _]:
+                        return "You can't go that way."
+                    case ["take"]:
+                        return "Take what?"
+                    case ["take", item]:
+                        return f"You take the {item}."
+                    case ["take", *items]:
+                        return "You take " + ", ".join(items) + "."
+                    case ["say", *words] if words:
+                        return 'You shout: "' + " ".join(words).upper() + '"'
+                    case ["quit"] | ["exit"]:
+                        return "Goodbye."
+                    case _:
+                        return "I don't understand."
+
+            print(command("go north"))`,
+          hints: ["case [\"go\", direction] if direction in (...): comes before case [\"go\", _]", "case [\"take\"], then case [\"take\", item], then case [\"take\", *items]", "case [\"quit\"] | [\"exit\"]:"],
+          tests: [{ code: d`
+            import ast
+            cmd = expect_func("command")
+            assert any(isinstance(n, ast.Match) for n in ast.walk(ast.parse(__code__))), "Use a match statement."
+            cases = {"go north": "You walk north.", "go west": "You walk west.", "go up": "You can't go that way.",
+                     "take": "Take what?", "take sword": "You take the sword.", "take a b c": "You take a, b, c.",
+                     "say hello there": 'You shout: "HELLO THERE"', "quit": "Goodbye.", "exit": "Goodbye.",
+                     "dance": "I don't understand.", "go": "I don't understand.", "": "I don't understand."}
+            for text, want in cases.items():
+                expect_equal(cmd(text), want, "command(" + repr(text) + ")")` }],
+        },
+        {
+          id: "18-2", title: "Lazy Guards",
+          story: "The gate guards are lazy: they stop checking as soon as they know the answer. Learn how, and when it tricks you.",
+          lesson: `<ul><li><b>Short-circuit</b>: <code>a and b</code> stops at the first falsy value; <code>a or b</code> stops at the first truthy one. They return that <b>value</b>, not just True/False: <code>"" or "guest"</code> → <code>"guest"</code></li>
+            <li><code>name or "stranger"</code> is a quick default, but it also replaces <code>0</code>, <code>""</code> and <code>[]</code>, which are falsy</li>
+            <li>To test for "no value", use <code>x is None</code> (not <code>== None</code>): only <code>None</code> matches</li>
+            <li><b>Chained comparisons</b>: <code>1 &lt;= x &lt;= 10</code> means <code>1 &lt;= x and x &lt;= 10</code></li></ul>`,
+          example: d`
+            print(0 or 5, "" or "guest", "ann" or "guest")   # 5 guest ann
+            print([] and "x", [1] and "x")                     # [] x
+            x = 0
+            print(x is None, x == 0, 1 <= x <= 10)`,
+          task: `Write:<br>• <code>greet(name)</code> → <code>"Welcome, Ann!"</code>, or <code>"Welcome, stranger!"</code> when name is empty or None<br>
+            • <code>pick(value, default)</code> → the value, unless it is <code>None</code> (so <code>0</code> and <code>""</code> are kept)<br>
+            • <code>in_range(x, lo, hi)</code> → True when lo ≤ x ≤ hi (use a chained comparison)<br>
+            • <code>first_or_none(items)</code> → the first item, or None when items is empty or None`,
+          starter: d`
+            def greet(name):
+                pass
+
+            def pick(value, default):
+                pass
+
+            def in_range(x, lo, hi):
+                pass
+
+            def first_or_none(items):
+                pass
+            `,
+          solution: d`
+            def greet(name):
+                return f"Welcome, {name or 'stranger'}!"
+
+            def pick(value, default):
+                return default if value is None else value
+
+            def in_range(x, lo, hi):
+                return lo <= x <= hi
+
+            def first_or_none(items):
+                return items[0] if items else None`,
+          hints: ["greet: name or \"stranger\"", "pick: value or default would lose 0 and \"\"; test value is None instead", "in_range: return lo <= x <= hi", "first_or_none: items[0] if items else None (None and [] are both falsy)"],
+          tests: [{ code: d`
+            g = expect_func("greet"); p = expect_func("pick"); r = expect_func("in_range"); f = expect_func("first_or_none")
+            expect_equal(g("Ann"), "Welcome, Ann!", "greet('Ann')"); expect_equal(g(""), "Welcome, stranger!", "greet('')"); expect_equal(g(None), "Welcome, stranger!", "greet(None)")
+            expect_equal(p(None, 5), 5, "pick(None, 5)")
+            expect_equal(p(0, 5), 0, "pick(0, 5): 0 is a real value, not a missing one")
+            expect_equal(p("", "x"), "", "pick('', 'x')"); expect_equal(p([], [1]), [], "pick([], [1])"); expect_equal(p(7, 5), 7, "pick(7, 5)")
+            expect_equal([r(x, 1, 10) for x in (0, 1, 5, 10, 11)], [False, True, True, True, False], "in_range for 0, 1, 5, 10, 11")
+            expect_equal(f([4, 5]), 4, "first_or_none([4, 5])"); expect_equal(f([]), None, "first_or_none([])"); expect_equal(f(None), None, "first_or_none(None)")
+            expect_equal(f([0]), 0, "first_or_none([0])")
+            import ast
+            assert any(isinstance(n, ast.Compare) and len(n.ops) >= 2 for n in ast.walk(ast.parse(__code__))), "Use a chained comparison in in_range, like lo <= x <= hi."` }],
+        },
+        {
+          id: "18-3", title: "Copies of the Map",
+          story: "The general copies the battle map to plan a trick, and the original map changes too! Learn which copies are real.",
+          lesson: `<p><code>b = a</code> makes no copy: both names point at the same list. <code>a.copy()</code> or <code>a[:]</code> copies the <b>outer</b> list only (a <b>shallow</b> copy): inner lists are still shared. For nested lists use <code>copy.deepcopy(a)</code> (after <code>import copy</code>), which copies everything inside too.</p>
+            <p>Handy list methods (they change the list in place and return <code>None</code>): <code>insert(i, x)</code>, <code>extend(other)</code>, <code>remove(x)</code> (first match), <code>pop(i)</code> (removes and returns), and <code>index(x)</code> finds a position.</p>`,
+          example: d`
+            import copy
+            board = [[0, 0], [0, 0]]
+            shallow = board.copy()
+            deep = copy.deepcopy(board)
+            shallow[0][0] = 9
+            print(board, deep)       # board changed through the shallow copy!
+            items = ["a", "c"]
+            items.insert(1, "b"); items.extend(["d", "e"])
+            print(items, items.index("c"))`,
+          task: `Write:<br>• <code>clone_board(board)</code> → a <b>fully independent</b> copy of a list of lists<br>
+            • <code>insert_sorted(items, x)</code> → insert x into the sorted list <code>items</code> <b>in place</b>, keeping it sorted (put it before the first item that's bigger)<br>
+            • <code>move_to_front(items, x)</code> → in place: if x is in the list, move its first occurrence to position 0; otherwise do nothing<br>
+            • <code>combine(a, b)</code> → a <b>new</b> list with a's items then b's, without changing a`,
+          starter: d`
+            import copy
+
+            def clone_board(board):
+                pass
+
+            def insert_sorted(items, x):
+                pass
+
+            def move_to_front(items, x):
+                pass
+
+            def combine(a, b):
+                pass
+            `,
+          solution: d`
+            import copy
+
+            def clone_board(board):
+                return copy.deepcopy(board)
+
+            def insert_sorted(items, x):
+                i = 0
+                while i < len(items) and items[i] <= x:
+                    i += 1
+                items.insert(i, x)
+
+            def move_to_front(items, x):
+                if x in items:
+                    items.remove(x)
+                    items.insert(0, x)
+
+            def combine(a, b):
+                result = a.copy()
+                result.extend(b)
+                return result`,
+          hints: ["clone_board: copy.deepcopy(board)", "insert_sorted: move i forward while items[i] <= x, then items.insert(i, x) (inserting at len(items) adds at the end)", "move_to_front: items.remove(x) then items.insert(0, x)", "combine: result = a.copy(); result.extend(b)"],
+          tests: [{ code: d`
+            cb = expect_func("clone_board"); ins = expect_func("insert_sorted"); mv = expect_func("move_to_front"); co = expect_func("combine")
+            board = [[1, 2], [3, 4]]; c = cb(board)
+            expect_equal(c, [[1, 2], [3, 4]], "clone_board copies the values")
+            c[0][0] = 99; c.append([5])
+            expect_equal(board, [[1, 2], [3, 4]], "the original board after changing the clone (it must not change)")
+            for start, x, want in (([1, 3, 5], 4, [1, 3, 4, 5]), ([1, 3, 5], 0, [0, 1, 3, 5]), ([1, 3, 5], 9, [1, 3, 5, 9]), ([], 2, [2]), ([2, 2], 2, [2, 2, 2])):
+                lst = list(start); out = ins(lst, x)
+                expect_equal(lst, want, "insert_sorted(" + str(start) + ", " + str(x) + ") changes the list to")
+                expect_equal(out, None, "insert_sorted returns None (it changes the list in place)")
+            lst = ["a", "b", "c", "b"]; mv(lst, "b"); expect_equal(lst, ["b", "a", "c", "b"], "move_to_front(['a', 'b', 'c', 'b'], 'b')")
+            lst = ["a", "b"]; mv(lst, "z"); expect_equal(lst, ["a", "b"], "move_to_front with a missing item")
+            a = [1, 2]; r = co(a, (3, 4))
+            expect_equal(r, [1, 2, 3, 4], "combine([1, 2], (3, 4))"); expect_equal(a, [1, 2], "combine must not change a")` }],
+        },
+        {
+          id: "18-4", title: "Tricks of Number and Memory",
+          story: "The clockmaker counts seconds, the herald counts calls, and the matchmaker counts meetings. Each has a small trick.",
+          lesson: `<ul><li><code>divmod(a, b)</code> returns <code>(a // b, a % b)</code> in one go: <code>divmod(125, 60)</code> → <code>(2, 5)</code></li>
+            <li><code>nonlocal</code> lets an inner function <b>change</b> a variable of the function around it (reading works without it; assigning needs it)</li>
+            <li>A <code>frozenset</code> is a set that can't change, so it can be a dictionary key. <code>frozenset({"ann", "bo"}) == frozenset({"bo", "ann"})</code>: order doesn't matter</li></ul>`,
+          example: d`
+            print(divmod(125, 60))
+
+            def make_bell():
+                rings = 0
+                def ring():
+                    nonlocal rings
+                    rings += 1
+                    return "ding " * rings
+                return ring
+
+            bell = make_bell()
+            print(bell()); print(bell())
+            meetings = {frozenset({"ann", "bo"}): 1}
+            print(meetings[frozenset({"bo", "ann"})])`,
+          task: `Write:<br>• <code>to_clock(seconds)</code> → <code>"H:MM:SS"</code> using <code>divmod</code> (3725 → <code>"1:02:05"</code>)<br>
+            • <code>make_counter(start=0)</code> → a function that returns start + 1, start + 2, … on each call (use <code>nonlocal</code>)<br>
+            • <code>count_meetings(pairs)</code> → a dict mapping <code>frozenset({a, b})</code> to how many times a and b met, in either order`,
+          starter: d`
+            def to_clock(seconds):
+                pass
+
+            def make_counter(start=0):
+                pass
+
+            def count_meetings(pairs):
+                pass
+            `,
+          solution: d`
+            def to_clock(seconds):
+                minutes, s = divmod(seconds, 60)
+                h, m = divmod(minutes, 60)
+                return f"{h}:{m:02d}:{s:02d}"
+
+            def make_counter(start=0):
+                n = start
+                def count():
+                    nonlocal n
+                    n += 1
+                    return n
+                return count
+
+            def count_meetings(pairs):
+                counts = {}
+                for a, b in pairs:
+                    key = frozenset({a, b})
+                    counts[key] = counts.get(key, 0) + 1
+                return counts`,
+          hints: ["minutes, s = divmod(seconds, 60); h, m = divmod(minutes, 60)", "f\"{h}:{m:02d}:{s:02d}\" pads with zeros", "make_counter: an inner function with nonlocal n", "key = frozenset({a, b}); counts[key] = counts.get(key, 0) + 1"],
+          tests: [{ code: d`
+            tc = expect_func("to_clock"); mc = expect_func("make_counter"); cm = expect_func("count_meetings")
+            assert "divmod" in __code__, "Use divmod in to_clock."
+            for s, want in ((3725, "1:02:05"), (0, "0:00:00"), (59, "0:00:59"), (36000, "10:00:00")):
+                expect_equal(tc(s), want, "to_clock(" + str(s) + ")")
+            c = mc(); expect_equal([c(), c(), c()], [1, 2, 3], "a counter's first three calls")
+            d = mc(10); expect_equal([d(), d()], [11, 12], "make_counter(10)"); expect_equal(c(), 4, "the first counter is separate")
+            got = cm([("ann", "bo"), ("bo", "ann"), ("ann", "cy")])
+            expect_equal(got, {frozenset({"ann", "bo"}): 2, frozenset({"ann", "cy"}): 1}, "count_meetings")` }],
+        },
+        {
+          id: "18-5", type: "quiz", title: "Riddles of the Small Secrets",
+          story: "The hall's keeper whispers riddles about the little tools.",
+          lesson: `<p>Short-circuits return values, shallow copies share their insides, <code>//</code> rounds towards minus infinity, and <code>round()</code> rounds halves to the even neighbour.</p>`,
+          questions: [
+            { q: "What does this print?", predict: true, code: d`
+                print(0 or "x", [] and 5, 3 or 4)`,
+              choices: ["x [] 3", "x 5 3", "True False True", "x [] 4"], answer: 0,
+              explain: "or returns the first truthy value; and returns the first falsy one (or the last value)." },
+            { q: "What does this print?", predict: true, code: d`
+                b = [[0, 0]] * 2
+                b[0][0] = 9
+                print(b)`,
+              choices: ["[[9, 0], [9, 0]]", "[[9, 0], [0, 0]]", "[[9, 9], [0, 0]]", "an error"], answer: 0,
+              explain: "[[0, 0]] * 2 repeats the same inner list twice. Build each row as a new list, for example by appending [0, 0] inside a loop." },
+            { q: "What does this print?", predict: true, code: d`
+                print(-7 // 2, -7 % 2, divmod(7, 2))`,
+              choices: ["-4 1 (3, 1)", "-3 -1 (3, 1)", "-3 1 (3, 1)", "-4 -1 (3, 1)"], answer: 0,
+              explain: "// rounds down (towards minus infinity), so -7 // 2 is -4, and then -7 % 2 is 1." },
+            { q: "What does this print?", predict: true, code: d`
+                print(round(2.5), round(3.5), round(2.675, 2))`,
+              choices: ["2 4 2.67", "3 4 2.68", "2 3 2.67", "3 4 2.67"], answer: 0,
+              explain: "Halves round to the even neighbour (banker's rounding), and 2.675 is stored as 2.67499999…" },
+            { q: "What does this print?", predict: true, code: d`
+                match (1, 2):
+                    case (x, 0):
+                        print("flat")
+                    case (x, y) if x < y:
+                        print("up", y)
+                    case _:
+                        print("other")`,
+              choices: ["up 2", "flat", "other", "up 1"], answer: 0,
+              explain: "(x, 0) needs a 0 in second place; (x, y) matches with the guard 1 < 2 true." },
+            { q: "Why write <code>if value is None:</code> rather than <code>if not value:</code>?",
+              choices: ["not value is also true for 0, \"\" and [], which may be real values", "is None is faster to type", "not value raises an error on None", "they are always the same"], answer: 0,
+              explain: "Only None is None. Falsy is a much bigger group." },
+          ],
+        },
+        {
+          id: "18-6", boss: true, time: 840, title: "The Quartermaster's Orders",
+          story: "The quartermaster shouts orders all day. Build the clerk who answers every one, keeps the stores, and can undo a bad day.",
+          lesson: `<p>Combine the hall's secrets: <code>match</code> with guards for the commands, <code>.get(item, 0)</code> for missing items, a <b>copy</b> of the stores for the save/undo feature (a plain <code>dict(stores)</code> is enough here: the values are numbers, which can't change in place), and sorted dictionary walking for the list.</p>`,
+          example: d`
+            stores = {"rope": 2}
+            saved = dict(stores)
+            stores["rope"] = 0
+            print(stores, saved)`,
+          task: `Write <code>run_orders(orders)</code>: it takes a list of order strings and returns a list of replies, one per order. The stores start empty.<br>
+            • <code>add ITEM N</code> (N whole digits) → add N; reply <code>"Added 3 rope."</code><br>
+            • <code>use ITEM N</code> → if there are at least N, take them away (delete the item when it reaches 0) and reply <code>"Used 2 rope."</code>; otherwise <code>"Not enough rope."</code><br>
+            • <code>count ITEM</code> → <code>"rope: 1"</code> (0 if none)<br>
+            • <code>list</code> → items sorted by name as <code>"bread x4, rope x1"</code>, or <code>"Empty."</code><br>
+            • <code>save</code> → remember a copy of the stores, reply <code>"Saved."</code>; <code>undo</code> → go back to the saved copy (<code>"Restored."</code>), or <code>"Nothing to restore."</code> if nothing was saved<br>
+            • anything else → <code>"Unknown order: &lt;the order&gt;"</code>`,
+          starter: d`
+            def run_orders(orders):
+                stores = {}
+                saved = None
+                replies = []
+                for order in orders:
+                    match order.split():
+                        case _:
+                            replies.append("Unknown order: " + order)
+                return replies
+            `,
+          solution: d`
+            def run_orders(orders):
+                stores = {}
+                saved = None
+                replies = []
+                for order in orders:
+                    match order.split():
+                        case ["add", item, n] if n.isdigit():
+                            stores[item] = stores.get(item, 0) + int(n)
+                            replies.append(f"Added {n} {item}.")
+                        case ["use", item, n] if n.isdigit():
+                            if stores.get(item, 0) >= int(n):
+                                stores[item] -= int(n)
+                                if stores[item] == 0:
+                                    del stores[item]
+                                replies.append(f"Used {n} {item}.")
+                            else:
+                                replies.append(f"Not enough {item}.")
+                        case ["count", item]:
+                            replies.append(f"{item}: {stores.get(item, 0)}")
+                        case ["list"]:
+                            parts = []
+                            for name in sorted(stores):
+                                parts.append(f"{name} x{stores[name]}")
+                            replies.append(", ".join(parts) or "Empty.")
+                        case ["save"]:
+                            saved = dict(stores)
+                            replies.append("Saved.")
+                        case ["undo"]:
+                            if saved is None:
+                                replies.append("Nothing to restore.")
+                            else:
+                                stores = dict(saved)
+                                replies.append("Restored.")
+                        case _:
+                            replies.append("Unknown order: " + order)
+                return replies`,
+          hints: ["case [\"add\", item, n] if n.isdigit():", "stores.get(item, 0) handles missing items", "list: \", \".join(parts) or \"Empty.\" (an empty string is falsy)", "save: saved = dict(stores); undo: stores = dict(saved), so later changes don't touch the saved copy"],
+          tests: [{ code: d`
+            import ast
+            ro = expect_func("run_orders")
+            assert any(isinstance(n, ast.Match) for n in ast.walk(ast.parse(__code__))), "Use a match statement for the orders."
+            orders = ["list", "add rope 3", "add bread 4", "use rope 2", "count rope", "use rope 5", "list", "save",
+                      "use rope 1", "count rope", "list", "undo", "list", "dance", "add sword", "use sword 1", "count shield"]
+            want = ["Empty.", "Added 3 rope.", "Added 4 bread.", "Used 2 rope.", "rope: 1", "Not enough rope.", "bread x4, rope x1", "Saved.",
+                    "Used 1 rope.", "rope: 0", "bread x4", "Restored.", "bread x4, rope x1", "Unknown order: dance", "Unknown order: add sword",
+                    "Not enough sword.", "shield: 0"]
+            got = ro(orders)
+            expect_equal(len(got), len(want), "number of replies")
+            for o, g, w in zip(orders, got, want):
+                expect_equal(g, w, "reply to " + repr(o))
+            expect_equal(ro(["undo"]), ["Nothing to restore."], "undo before any save")
+            expect_equal(ro(["save", "add a 1", "undo", "add a 2", "undo", "list"]), ["Saved.", "Added 1 a.", "Restored.", "Added 2 a.", "Restored.", "Empty."], "undo twice goes back to the same save")` }],
+        },
+      ],
+    },
     {
       id: 9, name: "The Trap Room", topic: "errors, exceptions & files", time: 600, icon: "⚠️",
       intro: "Traps everywhere. Good code expects things to go wrong — and handles it.",

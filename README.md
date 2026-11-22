@@ -18,7 +18,7 @@ doesn't load that way, use the server instead. You need an internet connection b
 
 | Realm | Subject | Status | Opens at 70% of |
 |---|---|---|---|
-| 🐍 The Serpent Kingdom | Python | **playable** · 16 floors · 94 missions | — |
+| 🐍 The Serpent Kingdom | Python | **playable** · 18 floors · 106 missions | — |
 | 🧮 The Iron Citadel | NumPy | **playable** · 8 floors · 40 missions | Python |
 | 🗄️ The Archive Fortress | SQL | **playable** · 8 floors · 39 missions | Python |
 | 🐼 The Bamboo Kingdom | pandas | **playable** · 12 floors · 59 missions | NumPy |
@@ -27,8 +27,8 @@ doesn't load that way, use the server instead. You need an internet connection b
 | 🤖 The Automaton Empire | Machine learning | **playable** · 12 floors · 59 missions | pandas + Statistics |
 | 👑 The Imperial Capital | Capstone projects | **playable** · 4 floors · 20 missions | SQL + Visualization + ML |
 
-All eight realms are playable: 391 missions in all. A realm opens once every realm it builds on is at least 70% done
-(e.g. 66 of the 94 Python missions open NumPy and SQL), and it stays open after that. A ruler is freed at 100%, and
+All eight realms are playable: 403 missions in all. A realm opens once every realm it builds on is at least 70% done
+(e.g. 75 of the 106 Python missions open NumPy and SQL), and it stays open after that. A ruler is freed at 100%, and
 freeing every ruler ends the story: the Empire is saved. The threshold is `UNLOCK_PCT` in `js/app.js`.
 
 ### Capstone: 4 floors
@@ -150,7 +150,7 @@ that are written into Python's file system before each run, so missions use `pd.
 | 7 | Shape Shifters | reshape, transpose, stack, split, tile, image processing |
 | 8 | The Matrix Vault | dot products, solving systems, random generators, linear regression, gradient descent |
 
-### Python: 16 floors
+### Python: 18 floors
 
 | # | Floor | Topic |
 |---|---|---|
@@ -161,15 +161,17 @@ that are written into Python's file system before each run, so missions use `pd.
 | 5 | The Stairs of Repetition | for, while, range, break/continue, loop-else, primes |
 | 6 | The Armory of Lists | lists, aliasing and copies, tuples, grids, merging |
 | 7 | The Vault of Keys | dictionaries, sets, grouping, anagrams |
-| 8 | The Spell Workshop | functions, defaults, `*args`/`**kwargs`, scope, closures, recursion, memoization |
-| 9 | The Trap Room | exceptions, custom exceptions, files, a ledger parser |
-| 10 | The Garden of Shortcuts | comprehensions, lambda, map/filter, zip, enumerate, any/all, lists of dicts |
-| 11 | The Hall of Knights | classes, inheritance, properties, special methods (`__add__`, `__eq__`…) |
-| 12 | The Sorcerer's Study | modules, generators, decorators, `collections` |
-| 13 | The Merchant's Ledger | `datetime`, JSON, CSV, a sales-report pipeline |
-| 14 | The Cipher Chamber | regular expressions, a log analyser |
-| 15 | The Clockwork Workshop | iterators, `itertools`, context managers, dataclasses, type hints, generator pipelines |
-| 16 | The Throne Room | five final projects |
+| 8 | The Hall of Many Paths | iterables, walking dictionaries (`keys`/`values`/`items`), unpacking with `*`, `iter`/`next` and one-way iterators |
+| 9 | The Spell Workshop | functions, defaults, `*args`/`**kwargs`, scope, closures, recursion, memoization |
+| 10 | The Hall of Small Secrets | `match`/`case`, short-circuit `and`/`or`, `is None`, chained comparisons, `copy`/`deepcopy`, `insert`/`extend`/`index`, `divmod`, `nonlocal`, `frozenset` |
+| 11 | The Trap Room | exceptions, custom exceptions, files, a ledger parser |
+| 12 | The Garden of Shortcuts | comprehensions, lambda, map/filter, zip, enumerate, any/all, lists of dicts |
+| 13 | The Hall of Knights | classes, inheritance, properties, special methods (`__add__`, `__eq__`…) |
+| 14 | The Sorcerer's Study | modules, generators, decorators, `collections` |
+| 15 | The Merchant's Ledger | `datetime`, JSON, CSV, a sales-report pipeline |
+| 16 | The Cipher Chamber | regular expressions, a log analyser |
+| 17 | The Clockwork Workshop | iterators, `itertools`, context managers, dataclasses, type hints, generator pipelines |
+| 18 | The Throne Room | five final projects |
 
 Each floor mixes four kinds of mission:
 - **Code missions**: a lesson, an example, then a task checked by hidden tests.

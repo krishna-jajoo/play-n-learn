@@ -249,8 +249,9 @@
   // what a locked realm still needs, e.g. "28 of the 40 NumPy seals (you have 21)"
   const stillNeeded = (e) => e.requires.map((id) => EMP[id]).filter((x) => !empireReady(x))
     .map((x) => `${unlockNeed(x)} of the ${x.missions.length} ${esc(x.name)} seals (you have ${doneIn(x.missions)})`);
-  // realms this one will open at the 70% mark that aren’t open yet, e.g. "NumPy & SQL"
-  const opensNext = (e) => EMPIRES.filter((x) => x.playable && x.requires.includes(e.id) && !empireOpen(x) && !empireReady(e)).map((x) => esc(x.name));
+  // realms this one will open at the 70% mark (when it is the last thing they need), e.g. "NumPy & SQL"
+  const opensNext = (e) => EMPIRES.filter((x) => x.playable && x.requires.includes(e.id) && !empireOpen(x) && !empireReady(e)
+    && x.requires.every((id) => id === e.id || empireReady(EMP[id]))).map((x) => esc(x.name));
   const empireOpen = (e) => e.playable && (!e.requires.length || !!(progress.opened || {})[e.id] || requiresMet(e));
   function rememberOpened() {
     progress.opened = progress.opened || {};
@@ -305,7 +306,7 @@
   function show(name) {
     if (serverMode && !auth) return showLogin();
     document.body.classList.remove("logged-out");
-    if (name !== "mission") stopTimer();
+    if (name !== "mission") { pauseMission(); stopTimer(); }
     screens.forEach((s) => ($("screen-" + s).hidden = s !== name));
     if (name === "home") renderHome();
     if (name === "map") renderMap(activeEmpire());
@@ -485,16 +486,19 @@
   let started = false;
   let hintsShown = 0;
   let revealed = false;
+  let resumable = false; // this mission has a paused, still-lit candle
 
   function openMission(m) {
     if (!m || !isUnlocked(m)) return;
     needPackages({ packages: [...(m.empire.packages || []), ...(m.packages || [])] }); // some missions need extra libraries (e.g. SciPy)
+    pauseMission();
     stopTimer();
     current = m;
     mode = progress.practice ? "practice" : "timed";
     started = false;
     hintsShown = 0;
     revealed = false;
+    wonCurrent = false;
     const w = m.world, e = m.empire, isQuiz = m.type === "quiz";
     const pos = w.missions.indexOf(m) + 1;
     progress.empire = e.id;
@@ -505,6 +509,7 @@
     $("m-title").textContent = m.title;
     $("m-lesson").innerHTML = m.lesson || "";
     $("m-example-box").hidden = !m.example;
+    $("m-example-box").open = !!store.get("pnl-example-open"); // closed unless the player chose to keep it open
     if (m.example) highlight($("m-example"), m.example.replace(/\n$/, ""), langOf(m));
     $("m-schema").hidden = !(isSql(m) && e.schema);
     if (isSql(m) && e.schema) $("m-schema-body").innerHTML = e.schema;
@@ -534,22 +539,41 @@
     $("briefing-title").textContent = m.title;
     $("briefing-lead").textContent = isQuiz ? `${m.questions.length} questions. When you press start, you'll have` : "Read the lesson on the left. When you press start, you'll have";
     $("briefing-time").textContent = fmt(t);
+    const paused = workOf(m.id).used;
+    resumable = paused > 0 && paused < t;
+    if (resumable) {
+      $("briefing-lead").textContent = "Your candle is still burning where you left it. You have";
+      $("briefing-time").textContent = fmt(t - paused) + " left";
+    }
     show("mission");
     $("lesson-panel").scrollTop = 0;
 
     if (mode === "practice") startMission("practice");
-    else { $("briefing").hidden = false; renderCandle(t, t); }
+    else { $("briefing").hidden = false; renderCandle(resumable ? t - paused : t, t); }
     if (!isQuiz) setTimeout(() => editor.refresh(), 0);
     updateRunButtons();
   }
 
   function startMission(asMode) {
+    const work = workOf(current.id);
+    const resume = asMode === "timed" && resumable && !started;
+    workOf.lastUsed = work.used || 0; workOf.lastHints = work.hints || 0; workOf.lastQ = work.q || 0;
+    if (resumable && !resume) work.candles += 1; // a paused candle given up for practice counts as used
+    resumable = false;
+    delete work.used; delete work.q; delete work.hints;
+    if (!started) segStart = performance.now();
+    saveWork(current.id, work);
     mode = asMode;
     started = true;
     $("briefing").hidden = true;
-    if (mode === "timed") startTimer(timeOf(current));
+    closeExample(); // focus on the task once the mission starts (the player can reopen it)
+    if (mode === "timed") {
+      startTimer(timeOf(current));
+      if (resume) { timer.penalty = workOf.lastUsed; tick(); } // carry on with the time already burned
+    }
     else { stopTimer(); $("candle").classList.add("practice"); $("candle-time").textContent = "Practice"; $("candle-fill").style.width = "100%"; }
-    if (current.type === "quiz") { if (mode === "timed") quiz.i = 0; renderQuestion(); } // a fresh candle restarts the quiz
+    if (resume) while (hintsShown < (workOf.lastHints || 0)) showHint(false); // hints already paid for come back free
+    if (current.type === "quiz") { if (resume) quiz.i = workOf.lastQ || 0; else if (mode === "timed") quiz.i = 0; renderQuestion(); } // a fresh candle restarts the quiz
     else editor.focus();
     updateRunButtons();
     updateHintButton();
@@ -629,17 +653,18 @@
       : left <= 0 ? "No more hints"
       : mode === "timed" && !revealed ? `Reveal a hint (−${HINT_PENALTY}s)` : "Reveal a hint";
   }
-  $("btn-hint").addEventListener("click", () => {
+  $("btn-hint").addEventListener("click", () => showHint(true));
+  function showHint(charge) {
     if (!current || !current.hints || hintsShown >= current.hints.length) return;
     const li = document.createElement("li");
     li.textContent = current.hints[hintsShown++];
     $("m-hints").appendChild(li);
-    if (mode === "timed" && timer.running) {
+    if (charge && mode === "timed" && timer.running) {
       timer.penalty += HINT_PENALTY;
       flashPenalty();
     }
     updateHintButton();
-  });
+  }
 
   // ───────────────────────── timer (the candle)
   const timer = { running: false, start: 0, total: 0, penalty: 0, id: null };
@@ -654,6 +679,33 @@
     timer.running = false;
     clearInterval(timer.id);
   }
+
+  // ───────────────────────── time spent on a mission (per player, in this browser)
+  // { spent: seconds of work over every attempt, candles: candles used up, used/q/hints: a lit candle paused
+  //   when the player left (time already burned, quiz question, hints shown) }. Cleared when the seal breaks.
+  const workKey = () => "pnl-work:" + (auth ? auth.username : "guest");
+  const workOf = (id) => Object.assign({ spent: 0, candles: 0 }, (store.get(workKey()) || {})[id]);
+  function saveWork(id, w) {
+    const all = store.get(workKey()) || {};
+    if (w) all[id] = w; else delete all[id];
+    store.set(workKey(), all);
+  }
+  let segStart = null; // when the current stretch of work on this mission began
+  let wonCurrent = false;
+  // Leaving the mission (tower, map, another mission, closing the page): bank the time and pause a lit candle.
+  function pauseMission() {
+    if (!current || !started || wonCurrent) return;
+    const w = workOf(current.id);
+    if (segStart != null) { w.spent += (performance.now() - segStart) / 1000; segStart = null; }
+    if (mode === "timed" && timer.running) {
+      w.used = elapsed();
+      w.hints = hintsShown;
+      if (current.type === "quiz") w.q = quiz.i;
+    }
+    saveWork(current.id, w);
+    started = false;
+  }
+  window.addEventListener("pagehide", () => { pauseMission(); stopTimer(); });
   const elapsed = () => (performance.now() - timer.start) / 1000 + timer.penalty;
   const remaining = () => timer.total - elapsed();
   function tick() {
@@ -683,6 +735,7 @@
   }
   function timeUp() {
     stopTimer();
+    if (current) { const w = workOf(current.id); w.candles += 1; saveWork(current.id, w); }
     $("candle").classList.add("out");
     updateRunButtons();
     const isQuiz = current.type === "quiz";
@@ -727,8 +780,9 @@
     const start = $("btn-start");
     if (start.disabled !== !!waiting) {
       start.disabled = !!waiting;
-      start.textContent = waiting ? "Waiting for the Python engine…" : "Light the candle & start";
     }
+    const label = waiting ? "Waiting for the Python engine…" : resumable ? "Relight the candle & continue" : "Light the candle & start";
+    if (start.textContent !== label) start.textContent = label;
   }
   setInterval(updateRunButtons, 500);
 
@@ -799,7 +853,21 @@
 
   $("btn-run").addEventListener("click", doRun);
   $("btn-submit").addEventListener("click", doSubmit);
-  $("btn-run-example").addEventListener("click", async () => {
+  // the Example box remembers whether the player keeps it open or closed (only when the player clicks it)
+  let autoToggle = false;
+  function closeExample() {
+    if (!$("m-example-box").open) return;
+    autoToggle = true;
+    $("m-example-box").open = false;
+  }
+  $("m-example-box").addEventListener("toggle", () => {
+    const open = $("m-example-box").open;
+    if (autoToggle) autoToggle = false;
+    else store.set("pnl-example-open", open);
+    $("m-example-box").querySelector(".example-hint").textContent = open ? "(click to hide)" : "(click to show)";
+  });
+  $("btn-run-example").addEventListener("click", async (ev) => {
+    ev.preventDefault(); // the button sits in the box header: run the example without opening/closing the box
     if (!current || !runner.ready) return;
     const inputs = (current.exampleInput || "").split("\n");
     setConsole(`<div class="muted">Running the example…</div>`);
@@ -823,9 +891,16 @@
     const wasTimed = mode === "timed" && timer.running;
     const used = wasTimed ? elapsed() : null;
     stopTimer();
+    const work = workOf(m.id);
+    if (segStart != null) { work.spent += (performance.now() - segStart) / 1000; segStart = null; }
+    const candles = work.candles + (wasTimed ? 1 : 0);
+    const totalSpent = work.spent;
+    saveWork(m.id, null);
+    wonCurrent = true;
+    const overTime = work.candles > 0; // a candle burned out (or was given up) on the way: the time limit was exceeded
     let stars;
     if (revealed) stars = 0;
-    else if (!wasTimed) stars = 1;
+    else if (!wasTimed || overTime) stars = 1;
     else {
       const frac = remaining() / timer.total;
       stars = frac >= 0.5 ? 3 : frac >= 0.25 ? 2 : 1;
@@ -859,6 +934,7 @@
     const explain = isQuiz && m.questions[m.questions.length - 1].explain;
 
     const note = revealed ? "You studied the solution — replay with the timer to earn stars."
+      : overTime ? "Seal broken! A candle burned out on the way, so this one gives ★. Replay it later with one candle for up to ★★★."
       : !wasTimed ? "Practice clear! Replay with the timer for up to ★★★."
       : stars === 3 ? "Flawless! The candle had plenty left." : stars === 2 ? "Well done — a little faster next time for ★★★." : "Just in time!";
     modal({
@@ -868,6 +944,7 @@
         <p>${note}</p>
         ${explain ? `<div class="msg info modal-explain">${explain}</div>` : ""}
         ${used != null ? `<p class="muted">Time used: ${fmt(used)} of ${fmt(timer.total)}</p>` : ""}
+        ${used == null || candles > 1 || totalSpent > used + 5 ? `<p class="muted">Total time on this mission: ${fmt(totalSpent)}${candles > 1 ? ` · ${candles} candles` : ""}</p>` : ""}
         ${newlyOpened.map((x) => `<div class="msg ok">${x.icon} <b>A new realm is open: ${esc(x.name)}</b> · ${esc(x.realm)}. You can keep climbing here, or begin it from the realms map.</div>`).join("")}
         ${floorDone && lastOfFloor && firstClear && nextWorld ? `<p>You climb to <b>Floor ${nextWorld.num}: ${esc(nextWorld.name)}</b> — ${esc(nextWorld.topic)}.</p>` : ""}`,
       actions: [
