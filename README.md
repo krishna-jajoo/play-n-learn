@@ -23,7 +23,21 @@ doesn't load that way, use the server instead. You need an internet connection b
 - **Game:** you start each mission with a lesson and an example. The timer starts only when you press
   Start. Finishing with ≥50% of the time left gives ★★★, ≥25% gives ★★, otherwise ★. Each hint costs 30 s.
   If time runs out you can retry, switch to practice (no timer, max ★), or reveal the solution (0 ★).
-- **Progress** (stars, unlocked missions, your code) is saved in the browser's localStorage.
+- **Players & progress:** when the game runs through `node tools/serve.cjs`, it asks *Who's playing?* Each player
+  logs in with a username and password and gets their own stars, unlocked missions and code. Everything is kept in
+  the git-ignored `save/` folder: `users.json` (passwords hashed with scrypt), `sessions.json` (stay logged in),
+  and `progress/<name>.json`. The server only listens on this computer. The double-clicked `index.html` uses the
+  same accounts while the server is running on port 8080. Without the server, for example on a static host, the
+  game runs in **guest mode** and saves in that browser only.
+- **Manage players from the terminal:**
+  ```
+  node tools/users.cjs list
+  node tools/users.cjs add <name> <password> [--from <progress.json>]
+  node tools/users.cjs passwd <name> <new-password>
+  node tools/users.cjs remove <name>
+  ```
+- **Backup:** the footer has *Export progress* (downloads a `.json` file) and *Import progress* (combines a
+  backup with your current progress). Use these to move progress to another browser or computer.
 
 ## Curriculum (13 floors · 46 missions)
 

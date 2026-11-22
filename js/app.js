@@ -6,7 +6,8 @@
   const ALL = WORLDS.flatMap((w) => w.missions.map((m) => Object.assign(m, { world: w })));
   const TOTAL_STARS = ALL.length * 3;
   const HINT_PENALTY = 30; // seconds
-  const STORE_KEY = "save-the-queen-python-v1";
+  const LEGACY_KEY = "save-the-queen-python-v1"; // browser save from before accounts (also used in guest mode)
+  const AUTH_KEY = "pnl-auth";
 
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -15,17 +16,216 @@
     return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
   };
 
-  // ───────────────────────── progress (localStorage)
+  // ───────────────────────── storage helpers
+  const store = {
+    get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* storage unavailable */ } },
+    del(k) { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } },
+  };
+  const emptyProgress = () => ({ missions: {}, code: {}, practice: false });
+
+  // ───────────────────────── accounts
+  // With tools/serve.cjs running, each player logs in and their progress lives in save/progress/<name>.json.
+  // Without the server (e.g. a plain static host) the game runs in guest mode, saving in this browser only.
+  let serverMode = false;
+  let auth = store.get(AUTH_KEY); // { username, token } | null
+  const storeKey = () => (auth ? "pnl-progress:" + auth.username : LEGACY_KEY);
+
+  // ───────────────────────── progress
   function loadProgress() {
-    try {
-      const p = JSON.parse(localStorage.getItem(STORE_KEY));
-      if (p && p.missions) return p;
-    } catch (e) { /* storage unavailable */ }
-    return { missions: {}, code: {}, practice: false };
+    const p = store.get(storeKey());
+    return p && p.missions ? p : emptyProgress();
   }
-  let progress = loadProgress();
+  let progress = emptyProgress();
+  function saveLocal() {
+    store.set(storeKey(), progress);
+  }
   function save() {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(progress)); } catch (e) { /* ignore */ }
+    progress.updated = Date.now();
+    saveLocal();
+    pushSoon();
+  }
+
+  // Combine two saves without losing anything: a mission done in either is done, best stars win.
+  function mergeProgress(a, b) {
+    const newer = (a.updated || 0) >= (b.updated || 0) ? a : b;
+    const older = newer === a ? b : a;
+    const out = {
+      missions: {},
+      code: Object.assign({}, older.code || {}, newer.code || {}),
+      practice: !!newer.practice,
+      updated: Math.max(a.updated || 0, b.updated || 0),
+    };
+    const ids = new Set([...Object.keys(a.missions || {}), ...Object.keys(b.missions || {})]);
+    ids.forEach((id) => {
+      const x = (a.missions || {})[id] || {}, y = (b.missions || {})[id] || {};
+      const bests = [x.best, y.best].filter((v) => typeof v === "number");
+      out.missions[id] = { done: !!(x.done || y.done), stars: Math.max(x.stars || 0, y.stars || 0) };
+      if (bests.length) out.missions[id].best = Math.min(...bests);
+    });
+    return out;
+  }
+
+  // ───────────────────────── server API (tools/serve.cjs)
+  const API_BASE = location.protocol === "file:" ? "http://localhost:8080/api/" : "api/";
+  function api(route, { method = "GET", body } = {}) {
+    const headers = {};
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+    if (auth) headers.Authorization = "Bearer " + auth.token;
+    return fetch(API_BASE + route, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined, cache: "no-store", keepalive: method === "PUT" });
+  }
+  let pushTimer = null;
+  function pushSoon() { clearTimeout(pushTimer); pushTimer = setTimeout(pushNow, 600); }
+  function pushNow() {
+    if (!serverMode || !auth) return Promise.resolve();
+    const who = auth.username;
+    return api("progress", { method: "PUT", body: progress })
+      .then((r) => {
+        if (r.status === 401 && auth && auth.username === who) return sessionExpired();
+        setSaveStatus(r.ok);
+      })
+      .catch(() => setSaveStatus(false));
+  }
+  function setSaveStatus(ok) {
+    const el = $("save-status");
+    el.textContent = !serverMode ? "Guest mode: progress is saved in this browser only. Use Export to keep a backup."
+      : ok === false ? "⚠ Couldn't reach the game server — progress is kept in this browser for now."
+      : `✓ ${auth.username}'s progress is saved (save/progress/${auth.username}.json)`;
+  }
+
+  async function boot() {
+    try {
+      const r = await fetch(API_BASE + "ping", { cache: "no-store" });
+      serverMode = r.headers.get("X-Play-Save") === "1";
+    } catch (e) { serverMode = false; }
+
+    if (!serverMode) { // guest mode: no accounts available
+      auth = null;
+      progress = loadProgress();
+      renderUserChip();
+      setSaveStatus();
+      return show("home");
+    }
+    if (auth) {
+      try {
+        const r = await api("me");
+        if (r.ok) return enterAs(auth);
+      } catch (e) { /* fall through to login */ }
+      auth = null;
+      store.del(AUTH_KEY);
+    }
+    showLogin();
+  }
+
+  async function enterAs(a) {
+    auth = a;
+    store.set(AUTH_KEY, auth);
+    progress = loadProgress(); // this browser's copy for this player
+    try {
+      const r = await api("progress");
+      if (r.ok) {
+        const remote = await r.json();
+        if (remote && remote.missions) progress = mergeProgress(progress, remote);
+      }
+    } catch (e) { /* offline: keep the browser copy */ }
+    offerLegacyProgress();
+    saveLocal();
+    pushNow();
+    renderUserChip();
+    setSaveStatus();
+    show("home");
+  }
+
+  // Progress saved in this browser before accounts existed: offer it to the player once.
+  function offerLegacyProgress() {
+    const legacy = store.get(LEGACY_KEY);
+    if (!legacy || !legacy.missions) return;
+    const n = Object.values(legacy.missions).filter((m) => m.done).length;
+    const skipKey = "pnl-legacy-skip:" + auth.username;
+    if (!n || store.get(skipKey)) return;
+    if (confirm(`This browser has progress saved before accounts existed (${n} missions finished).\n\nAdd it to ${auth.username}'s account?`)) {
+      progress = mergeProgress(progress, legacy);
+      store.del(LEGACY_KEY);
+    } else {
+      store.set(skipKey, true);
+    }
+  }
+
+  async function logout() {
+    stopTimer();
+    clearTimeout(pushTimer);
+    clearTimeout(saveTimer);
+    await pushNow(); // make sure the latest progress is on disk before the session ends
+    try { await api("logout", { method: "POST" }); } catch (e) { /* ignore */ }
+    auth = null;
+    store.del(AUTH_KEY);
+    progress = emptyProgress();
+    current = null;
+    showLogin();
+  }
+  function sessionExpired() {
+    auth = null;
+    store.del(AUTH_KEY);
+    showLogin("You were logged out. Please log in again.");
+  }
+
+  function renderUserChip() {
+    $("user-chip").hidden = !auth;
+    if (auth) $("user-name").textContent = auth.username;
+  }
+
+  // ───────────────────────── login screen
+  let loginMode = "login"; // "login" | "signup"
+  function showLogin(message) {
+    renderUserChip();
+    setLoginMode(loginMode);
+    $("login-error").textContent = message || "";
+    document.body.classList.add("logged-out");
+    $("save-status").textContent = "";
+    screens.forEach((s) => ($("screen-" + s).hidden = s !== "login"));
+    $("login-user").focus();
+  }
+  function setLoginMode(m) {
+    loginMode = m;
+    const signup = m === "signup";
+    $("tab-login").classList.toggle("active", !signup);
+    $("tab-signup").classList.toggle("active", signup);
+    $("tab-login").setAttribute("aria-selected", String(!signup));
+    $("tab-signup").setAttribute("aria-selected", String(signup));
+    $("login-confirm-row").hidden = !signup;
+    $("login-pass").autocomplete = signup ? "new-password" : "current-password";
+    $("login-submit").textContent = signup ? "Create player & start" : "Log in";
+    $("login-error").textContent = "";
+  }
+  $("tab-login").addEventListener("click", () => setLoginMode("login"));
+  $("tab-signup").addEventListener("click", () => setLoginMode("signup"));
+  $("login-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const username = $("login-user").value.trim();
+    const password = $("login-pass").value;
+    const err = $("login-error");
+    if (loginMode === "signup" && password !== $("login-confirm").value) { err.textContent = "The two passwords don't match."; return; }
+    const btn = $("login-submit");
+    btn.disabled = true;
+    err.textContent = "";
+    try {
+      const r = await api(loginMode, { method: "POST", body: { username, password } });
+      const data = await r.json();
+      if (!r.ok) { err.textContent = data.error || "Something went wrong."; return; }
+      $("login-pass").value = "";
+      $("login-confirm").value = "";
+      await enterAs({ username: data.username, token: data.token });
+    } catch (ex) {
+      err.textContent = "Couldn't reach the game server. Is `node tools/serve.cjs` running?";
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  function refreshVisible() {
+    renderHeader();
+    if (!$("screen-home").hidden) renderHome();
+    if (!$("screen-map").hidden) renderMap();
   }
   const rec = (id) => progress.missions[id] || {};
   const isDone = (id) => !!rec(id).done;
@@ -49,8 +249,10 @@
   });
 
   // ───────────────────────── screens
-  const screens = ["home", "map", "mission"];
+  const screens = ["login", "home", "map", "mission"];
   function show(name) {
+    if (serverMode && !auth) return showLogin();
+    document.body.classList.remove("logged-out");
     if (name !== "mission") stopTimer();
     screens.forEach((s) => ($("screen-" + s).hidden = s !== name));
     if (name === "home") renderHome();
@@ -485,11 +687,44 @@
     if (current && !$("screen-mission").hidden && progress.practice && !(mode === "timed" && timer.running)) startMission("practice");
   });
   $("btn-reset-progress").addEventListener("click", () => {
-    if (!confirm("Erase all stars, progress and saved code? This cannot be undone.")) return;
-    progress = { missions: {}, code: {}, practice: false };
+    const who = auth ? `${auth.username}'s` : "all";
+    if (!confirm(`Erase ${who} stars, progress and saved code? This cannot be undone.`)) return;
+    progress = emptyProgress();
     save();
     show("home");
   });
 
-  show("home");
+  // Export / import a backup file (works anywhere: other browser, other computer).
+  $("btn-export").addEventListener("click", () => {
+    const blob = new Blob([JSON.stringify(progress, null, 1)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    const now = new Date();
+    const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    a.download = `play-n-learn-progress-${day}.json`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  });
+  $("btn-import").addEventListener("click", () => $("import-file").click());
+  $("import-file").addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const data = JSON.parse(await file.text());
+      if (!data || typeof data.missions !== "object") throw new Error("not a progress file");
+      const before = doneCount();
+      progress = mergeProgress(progress, data);
+      save();
+      show("home");
+      alert(`Progress imported. Seals broken: ${before} → ${doneCount()}.`);
+    } catch (err) {
+      alert("That file isn't a valid progress backup.");
+    }
+  });
+
+  $("btn-logout").addEventListener("click", logout);
+
+  boot();
 })();

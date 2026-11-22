@@ -1,0 +1,5 @@
+# Personal game progress written by tools/serve.cjs
+save/
+
+node_modules/
+*.log

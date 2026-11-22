@@ -27,12 +27,44 @@
         <span class="switch-label">Practice</span>
       </label>
       <button class="btn ghost small" data-go="map">Tower</button>
+      <span class="user-chip" id="user-chip" hidden>
+        <span class="user-avatar" aria-hidden="true">👤</span>
+        <b id="user-name"></b>
+        <button class="btn ghost small" id="btn-logout">Log out</button>
+      </span>
     </div>
   </header>
 
   <main>
+    <!-- LOGIN -->
+    <section class="screen" id="screen-login" hidden>
+      <div class="login-card">
+        <div class="login-crown" aria-hidden="true">♛</div>
+        <h1>Who's playing?</h1>
+        <p class="muted">Each player has their own tower, stars and code.</p>
+        <div class="login-tabs" role="tablist">
+          <button type="button" role="tab" id="tab-login" class="active" aria-selected="true">Log in</button>
+          <button type="button" role="tab" id="tab-signup" aria-selected="false">New player</button>
+        </div>
+        <form id="login-form" autocomplete="on">
+          <label>Username
+            <input id="login-user" name="username" autocomplete="username" required minlength="3" maxlength="20" pattern="[A-Za-z0-9_\-]+" title="3–20 letters, numbers, _ or -" spellcheck="false" autocapitalize="off">
+          </label>
+          <label>Password
+            <input id="login-pass" name="password" type="password" autocomplete="current-password" required minlength="4">
+          </label>
+          <label id="login-confirm-row" hidden>Repeat password
+            <input id="login-confirm" type="password" autocomplete="new-password" minlength="4">
+          </label>
+          <p class="login-error" id="login-error" role="alert"></p>
+          <button class="btn primary big" id="login-submit" type="submit">Log in</button>
+        </form>
+        <p class="muted small">Accounts are kept on this computer in the <code>save</code> folder. Passwords are stored hashed, never as plain text.</p>
+      </div>
+    </section>
+
     <!-- HOME -->
-    <section class="screen" id="screen-home">
+    <section class="screen" id="screen-home" hidden>
       <div class="hero">
         <div class="hero-text">
           <p class="eyebrow">A free coding quest</p>
@@ -159,7 +191,10 @@
   </main>
 
   <footer class="footer">
-    <span>Free forever · Your progress is saved in this browser.</span>
+    <span id="save-status">Progress is saved in this browser.</span>
+    <button class="btn link small" id="btn-export" title="Download a backup of your progress">Export progress</button>
+    <button class="btn link small" id="btn-import" title="Load a backup (it is combined with your current progress)">Import progress</button>
+    <input type="file" id="import-file" accept=".json,application/json" hidden>
     <button class="btn link small" id="btn-reset-progress">Reset all progress</button>
   </footer>
 
