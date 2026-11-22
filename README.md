@@ -216,6 +216,29 @@ Each floor mixes four kinds of mission:
 - **Backup:** the footer has *Export progress* (downloads a `.json` file) and *Import progress* (combines a
   backup with your current progress).
 
+## Protection
+
+Inspired by the bills app. Two layers:
+
+- **The server** (`tools/serve.cjs`) refuses AI assistants fetching a shared link (ChatGPT, Claude, Perplexity, Gemini
+  training, Meta, Apple…), crawlers, headless browsers and download tools (curl, wget, Python/Node scripts…) with
+  `403 Access denied`, for the page, the mission files and the API. Every response carries
+  `X-Robots-Tag: noindex, nofollow, noarchive, nosnippet, noai`, and `robots.txt` disallows everything.
+- **The page** (`js/guard.js`, loaded first): automated browsers get "Access denied"; F12, Ctrl+Shift+I/J/C/K,
+  Ctrl+U and Ctrl+S (and the Mac shortcuts) are blocked; right-click is blocked except in the code editor and text
+  boxes; and [disable-devtool](https://github.com/theajack/disable-devtool) (`js/vendor/`, MIT) locks the page if
+  developer tools are opened another way. Copy and paste keep working, since players need them for code.
+
+To debug, start the server with the guard off (AI fetchers are still refused):
+
+```
+ALLOW_DEVTOOLS=1 node tools/serve.cjs                  # PowerShell: $env:ALLOW_DEVTOOLS=1; node tools/serve.cjs
+```
+
+Limits: whatever a browser shows can be copied by someone determined enough (for example by typing a mission file's
+address, or with an AI tool that drives a normal browser). These layers stop casual inspection, AI link-fetchers and
+scrapers, not a determined person.
+
 ## Project layout
 
 ```
