@@ -282,3 +282,5 @@ After changing missions, check that every solution passes, every starter fails, 
 npm install pyodide@0.26.4
 node tools/validate.cjs            # or: node tools/validate.cjs python
 ```
+
+## check
